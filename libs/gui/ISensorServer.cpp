@@ -29,6 +29,11 @@
 #include <gui/ISensorServer.h>
 #include <gui/ISensorEventConnection.h>
 
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <rpc/share_rpc.h>
+
 namespace android {
 // ----------------------------------------------------------------------------
 
@@ -36,6 +41,8 @@ enum {
     GET_SENSOR_LIST = IBinder::FIRST_CALL_TRANSACTION,
     CREATE_SENSOR_EVENT_CONNECTION,
 };
+
+class BpSensorEventConnection;
 
 class BpSensorServer : public BpInterface<ISensorServer>
 {

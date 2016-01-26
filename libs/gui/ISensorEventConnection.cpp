@@ -26,6 +26,18 @@
 
 #include <gui/ISensorEventConnection.h>
 #include <gui/BitTube.h>
+#include <gui/RpcBitTube.h>
+
+#include <rpc/share_rpc.h>
+
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
+#include <fcntl.h>
+#include <unistd.h>
+#define MAX_SOCKET_BUFFER_SIZE_BATCHED 1024 * 1024
+#define SOCKET_BUFFER_SIZE_NON_BATCHED 4 * 1024
 
 namespace android {
 // ----------------------------------------------------------------------------
@@ -50,7 +62,13 @@ public:
         Parcel data, reply;
         data.writeInterfaceToken(ISensorEventConnection::getInterfaceDescriptor());
         remote()->transact(GET_SENSOR_CHANNEL, data, &reply);
-        return new BitTube(reply);
+        int type = reply.readInt32();
+        // modified by yli118 - to differentiate which bit tube to create
+        if(type == 1) {
+            return new BitTube(reply);
+        } else {
+            return new RpcBitTube(reply);
+        }
     }
 
     virtual status_t enableDisable(int handle, bool enabled, nsecs_t samplingPeriodNs,

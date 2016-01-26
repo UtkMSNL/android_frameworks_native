@@ -54,6 +54,7 @@ public:
     ssize_t getSensorList(Sensor const* const** list) const;
     Sensor const* getDefaultSensor(int type);
     sp<SensorEventQueue> createEventQueue();
+    void replaceRefAsProxy();
 
 private:
     // DeathRecipient interface

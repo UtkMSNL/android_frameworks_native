@@ -104,6 +104,42 @@ status_t SensorManager::assertStateLocked() const {
 
 
 
+void SensorManager::replaceRefAsProxy() {
+    // try for one second
+    const String16 name("sensorservice");
+    for (int i=0 ; i<4 ; i++) {
+        status_t err = getService(name, &mSensorServer);
+        if (err == NAME_NOT_FOUND) {
+            usleep(250000);
+            continue;
+        }
+        if (err != NO_ERROR) {
+            return;
+        }
+        break;
+    }
+
+    class DeathObserver : public IBinder::DeathRecipient {
+        SensorManager& mSensorManger;
+        virtual void binderDied(const wp<IBinder>& who) {
+            ALOGW("sensorservice died [%p]", who.unsafe_get());
+            mSensorManger.sensorManagerDied();
+        }
+    public:
+        DeathObserver(SensorManager& mgr) : mSensorManger(mgr) { }
+    };
+
+    mDeathObserver = new DeathObserver(*const_cast<SensorManager *>(this));
+    mSensorServer->asBinder()->linkToDeath(mDeathObserver);
+
+    mSensors = mSensorServer->getSensorList();
+    size_t count = mSensors.size();
+    mSensorList = (Sensor const**)malloc(count * sizeof(Sensor*));
+    for (size_t i=0 ; i<count ; i++) {
+        mSensorList[i] = mSensors.array() + i;
+    }
+}
+
 ssize_t SensorManager::getSensorList(Sensor const* const** list) const
 {
     Mutex::Autolock _l(mLock);

@@ -51,6 +51,14 @@
 #include "SensorFusion.h"
 #include "SensorService.h"
 
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <gui/RpcBitTube.h>
+#include <rpc/share_rpc.h>
+#include "time.h"
+#include <sys/time.h>
+
 namespace android {
 // ---------------------------------------------------------------------------
 
@@ -69,6 +77,7 @@ SensorService::SensorService()
     : mInitCheck(NO_INIT), mSocketBufferSize(SOCKET_BUFFER_SIZE_NON_BATCHED),
       mWakeLockAcquired(false)
 {
+    RpcUtilInst.sensorService = this;
 }
 
 void SensorService::onFirstRef()
@@ -709,7 +718,9 @@ void SensorService::cleanupConnection(SensorEventConnection* c)
     }
     c->updateLooperRegistration(mLooper);
     mActiveConnections.remove(connection);
-    BatteryService::cleanup(c->getUid());
+    // modified by yli118 - temporarily disable this function so that the sensor can go without battery check
+    //BatteryService::cleanup(c->getUid());
+    // modified by yli118
     if (c->needsWakeLock()) {
         checkWakeLockStateLocked();
     }
@@ -765,7 +776,9 @@ status_t SensorService::enable(const sp<SensorEventConnection>& connection,
     }
 
     if (connection->addSensor(handle)) {
-        BatteryService::enableSensor(connection->getUid(), handle);
+        // modified by yli118 - temporarily disable this function so that the sensor can go without battery check
+        //BatteryService::enableSensor(connection->getUid(), handle);
+        // modified by yli118
         // the sensor was added (which means it wasn't already there)
         // so, see if this connection becomes active
         if (mActiveConnections.indexOf(connection) < 0) {
@@ -854,7 +867,9 @@ status_t SensorService::cleanupWithoutDisableLocked(
     if (rec) {
         // see if this connection becomes inactive
         if (connection->removeSensor(handle)) {
-            BatteryService::disableSensor(connection->getUid(), handle);
+            // modified by yli118 - temporarily disable this function so that the sensor can go without battery check
+            //BatteryService::disableSensor(connection->getUid(), handle);
+            // modified by yli118
         }
         if (connection->hasAnySensor() == false) {
             connection->updateLooperRegistration(mLooper);
@@ -1613,6 +1628,270 @@ int SensorService::SensorEventConnection::computeMaxCacheSizeLocked() const {
        return MAX_SOCKET_BUFFER_SIZE_BATCHED/sizeof(sensors_event_t);
    }
    return fifoWakeUpSensors + fifoNonWakeUpSensors;
+}
+
+
+// ------ start of rpc operation -----
+
+SensorService::RpcSensorEventConnection::RpcSensorEventConnection(const sp<SensorService>& service, uid_t uid, int sendFd, int receiveFd) :
+    SensorService::SensorEventConnection(service, uid)
+{
+    mChannel = new RpcBitTube(sendFd, -1, service->mSocketBufferSize);
+}
+
+// todo: clean up the connection
+SensorService::RpcSensorEventConnection::~RpcSensorEventConnection()
+{
+    ALOGD_IF(DEBUG_CONNECTIONS, "~SensorEventConnection(%p)", this);
+    /*ALOGE("rpc sensor service start to defact connection with id: %d", mChannel->mSendFd);
+    mService->cleanupConnection(this);
+    if (mEventCache != NULL) {
+        delete mEventCache;
+    }*/
+}
+
+/*sp<BitTube> SensorService::RpcSensorEventConnection::getSensorChannel() const
+{
+    // todo: return to correct sensor channel
+    return mChannel;
+}*/
+
+
+RpcResponse* SensorEventConnection_enableDisable(RpcRequest* request) {
+    //ALOGE("rpc sensor service start to do enable and disable");
+    //ISensorEventConnection* conn = (ISensorEventConnection*) RpcUtilInst.idToObjMap[request->serviceId];
+    sp<SensorService::RpcSensorEventConnection>* connsp = (sp<SensorService::RpcSensorEventConnection>*) RpcUtilInst.idToObjMap[request->serviceId];
+    SensorService::RpcSensorEventConnection* conn = connsp->get();
+    //ALOGE("rpc sensor service do enable and disable finish getting conn sp");
+    
+    int handle;
+    fifoReadBuffer(request->args, (char*) &handle, sizeof(handle));
+    bool enabled;
+    fifoReadBuffer(request->args, (char*) &enabled, sizeof(enabled));
+    nsecs_t samplingPeriodNs;
+    fifoReadBuffer(request->args, (char*) &samplingPeriodNs, sizeof(samplingPeriodNs));
+    nsecs_t maxBatchReportLatencyNs;
+    fifoReadBuffer(request->args, (char*) &maxBatchReportLatencyNs, sizeof(maxBatchReportLatencyNs));
+    int reservedFlags;
+    fifoReadBuffer(request->args, (char*) &reservedFlags, sizeof(reservedFlags));
+
+#ifdef CPU_TIME    
+    clock_t start = clock();
+    status_t err = conn->enableDisable(handle, enabled, samplingPeriodNs, maxBatchReportLatencyNs, reservedFlags);
+    clock_t finish = clock();
+    ALOGE("rpc sensor service experiment enable disable: %ld", (finish - start) * 1000 / CLOCKS_PER_SEC);
+#else
+    struct timeval start, finish;
+    gettimeofday(&start, NULL);
+    status_t err = conn->enableDisable(handle, enabled, samplingPeriodNs, maxBatchReportLatencyNs, reservedFlags);
+    gettimeofday(&finish, NULL);
+    ALOGE("rpc sensor service experiment enable disable: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
+#endif
+    
+    RpcResponse* response = new RpcResponse();
+    response->ret = fifoCreate();
+    response->retSize = 0;
+    fifoPushData(response->ret, (char*) &err, sizeof(err));
+    response->retSize += sizeof(err);
+    
+    ALOGE("rpc sensor service finish enabling and disabling the sensor connection handle: %d, service id: %d, seq: %d, samplingPeriodNs: %lld, maxBatchReportLatencyNs: %lld, timestamp: %ld.%ld && %ld.%ld", handle, request->serviceId, request->seqNo, samplingPeriodNs, maxBatchReportLatencyNs);
+    
+    return response;
+}
+
+RpcResponse* SensorEventConnection_setEventRate(RpcRequest* request) {
+    //ISensorEventConnection* conn = (ISensorEventConnection*) RpcUtilInst.idToObjMap[request->serviceId];
+    sp<SensorService::RpcSensorEventConnection>* connsp = (sp<SensorService::RpcSensorEventConnection>*) RpcUtilInst.idToObjMap[request->serviceId];
+    SensorService::RpcSensorEventConnection* conn = connsp->get();
+    int handle;
+    fifoReadBuffer(request->args, (char*) &handle, sizeof(handle));
+    nsecs_t samplingPeriodNs;
+    fifoReadBuffer(request->args, (char*) &samplingPeriodNs, sizeof(samplingPeriodNs));
+
+#ifdef CPU_TIME    
+    clock_t start = clock();
+    status_t err = conn->setEventRate(handle, samplingPeriodNs);
+    clock_t finish = clock();
+    ALOGE("rpc sensor service experiment set event rate: %ld", (finish - start) * 1000 / CLOCKS_PER_SEC);
+#else
+    struct timeval start, finish;
+    gettimeofday(&start, NULL);
+    status_t err = conn->setEventRate(handle, samplingPeriodNs);
+    gettimeofday(&finish, NULL);
+    ALOGE("rpc sensor service experiment set event rate: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
+#endif    
+    
+    RpcResponse* response = new RpcResponse();
+    response->ret = fifoCreate();
+    response->retSize = 0;
+    fifoPushData(response->ret, (char*) &err, sizeof(err));
+    response->retSize += sizeof(err);
+    
+    return response;
+}
+
+RpcResponse* SensorEventConnection_flush(RpcRequest* request) {
+    //ISensorEventConnection* conn = (ISensorEventConnection*) RpcUtilInst.idToObjMap[request->serviceId];
+    sp<SensorService::RpcSensorEventConnection>* connsp = (sp<SensorService::RpcSensorEventConnection>*) RpcUtilInst.idToObjMap[request->serviceId];
+    SensorService::RpcSensorEventConnection* conn = connsp->get();
+   
+#ifdef CPU_TIME    
+    clock_t start = clock();
+    status_t err = conn->flush();
+    clock_t finish = clock();
+    ALOGE("rpc sensor service experiment flush: %ld", (finish - start) * 1000 / CLOCKS_PER_SEC);
+#else
+    struct timeval start, finish;
+    gettimeofday(&start, NULL);
+    status_t err = conn->flush();
+    gettimeofday(&finish, NULL);
+    ALOGE("rpc sensor service experiment flush: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
+#endif   
+    
+    RpcResponse* response = new RpcResponse();
+    response->ret = fifoCreate();
+    response->retSize = 0;
+    fifoPushData(response->ret, (char*) &err, sizeof(err));
+    response->retSize += sizeof(err);
+    
+    return response;
+}
+
+RpcResponse* SensorEventConnection_destroy(RpcRequest* request) {
+    //ISensorEventConnection* conn = (ISensorEventConnection*) RpcUtilInst.idToObjMap[request->serviceId];
+    sp<SensorService::RpcSensorEventConnection>* connsp = (sp<SensorService::RpcSensorEventConnection>*) RpcUtilInst.idToObjMap[request->serviceId];
+    SensorService::RpcSensorEventConnection* conn = connsp->get();
+    
+    int sendFd = conn->mChannel->mSendFd;
+    delete connsp;
+    RpcUtilInst.idToObjMap[request->serviceId] = NULL;
+    close(sendFd);
+    
+    RpcResponse* response = new RpcResponse();
+    response->retSize = 0;
+    
+    return response;
+}
+
+RpcResponse* SensorService_getSensorList(RpcRequest* request) {
+    ISensorServer* sensorServer = (ISensorServer*) RpcUtilInst.sensorService;
+#ifdef CPU_TIME    
+    clock_t start = clock();
+    Vector<Sensor> sensorList = sensorServer->getSensorList();
+    clock_t finish = clock();
+    ALOGE("rpc sensor service experiment get sensor list: %ld", (finish - start) * 1000 / CLOCKS_PER_SEC);
+#else
+    struct timeval start, finish;
+    gettimeofday(&start, NULL);
+    Vector<Sensor> sensorList = sensorServer->getSensorList();
+    gettimeofday(&finish, NULL);
+    ALOGE("rpc sensor service experiment get sensor list: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
+#endif   
+    
+    RpcResponse* response = new RpcResponse();
+    response->ret = fifoCreate();
+    response->retSize = 0;
+    for (size_t i=0 ; i<sensorList.size() ; i++) {
+        const Sensor& sensor(sensorList[i]);
+        size_t len;
+        len = sensor.getName().length();
+        fifoPushData(response->ret, (char*) &len, sizeof(len));
+        response->retSize += sizeof(len);
+        fifoPushData(response->ret, (char*) sensor.getName().string(), len);
+        response->retSize += len;
+        
+        len = sensor.getVendor().length();
+        fifoPushData(response->ret, (char*) &len, sizeof(len));
+        response->retSize += sizeof(len);
+        fifoPushData(response->ret, (char*) sensor.getVendor().string(), len);
+        response->retSize += len;
+        
+        int32_t version = sensor.getVersion();
+        fifoPushData(response->ret, (char*) &version, sizeof(version));
+        response->retSize += sizeof(version);
+        int32_t handle = sensor.getHandle();
+        fifoPushData(response->ret, (char*) &handle, sizeof(handle));
+        response->retSize += sizeof(handle);
+        int32_t type = sensor.getType();
+        fifoPushData(response->ret, (char*) &type, sizeof(type));
+        response->retSize += sizeof(type);
+        float   minValue = sensor.getMinValue();
+        fifoPushData(response->ret, (char*) &minValue, sizeof(minValue));
+        response->retSize += sizeof(minValue);
+        float   maxValue = sensor.getMaxValue();
+        fifoPushData(response->ret, (char*) &maxValue, sizeof(maxValue));
+        response->retSize += sizeof(maxValue);
+        float   resolution = sensor.getResolution();
+        fifoPushData(response->ret, (char*) &resolution, sizeof(resolution));
+        response->retSize += sizeof(resolution);
+        float   power = sensor.getPowerUsage();
+        fifoPushData(response->ret, (char*) &power, sizeof(power));
+        response->retSize += sizeof(power);
+        int32_t minDelay = sensor.getMinDelay();
+        fifoPushData(response->ret, (char*) &minDelay, sizeof(minDelay));
+        response->retSize += sizeof(minDelay);
+        int32_t fifoReservedEventCount = sensor.getFifoReservedEventCount();
+        fifoPushData(response->ret, (char*) &fifoReservedEventCount, sizeof(fifoReservedEventCount));
+        response->retSize += sizeof(fifoReservedEventCount);
+        int32_t fifoMaxEventCount = sensor.getFifoMaxEventCount();
+        fifoPushData(response->ret, (char*) &fifoMaxEventCount, sizeof(fifoMaxEventCount));
+        response->retSize += sizeof(fifoMaxEventCount);
+        
+        len = sensor.getStringType().length();
+        fifoPushData(response->ret, (char*) &len, sizeof(len));
+        response->retSize += sizeof(len);
+        fifoPushData(response->ret, (char*) sensor.getStringType().string(), len);
+        response->retSize += len;
+        
+        len = sensor.getRequiredPermission().length();
+        fifoPushData(response->ret, (char*) &len, sizeof(len));
+        response->retSize += sizeof(len);
+        fifoPushData(response->ret, (char*) sensor.getRequiredPermission().string(), len);
+        response->retSize += len;
+        
+        int32_t maxDelay = sensor.getMaxDelay();
+        fifoPushData(response->ret, (char*) &maxDelay, sizeof(maxDelay));
+        response->retSize += sizeof(maxDelay);
+        int32_t flags = sensor.getFlags();
+        fifoPushData(response->ret, (char*) &flags, sizeof(flags));
+        response->retSize += sizeof(flags);
+    }
+    
+    return response;
+}
+
+RpcResponse* SensorService_createSensorEventConnection(RpcRequest* request) {
+    uid_t uid;
+    fifoReadBuffer(request->args, (char*) &uid, sizeof(uid));
+    int sendFd;
+    fifoReadBuffer(request->args, (char*) &sendFd, sizeof(sendFd));
+    
+    SensorService* sensorService = (SensorService*) RpcUtilInst.sensorService;
+    int serviceObjId = RpcUtilInst.nextServiceObjId++;
+    
+    SensorService::RpcSensorEventConnection* conn = new SensorService::RpcSensorEventConnection(sensorService, uid, sendFd, -1);
+    sp<SensorService::RpcSensorEventConnection>* resultConn = new sp<SensorService::RpcSensorEventConnection>(conn);
+    RpcUtilInst.idToObjMap[serviceObjId] = resultConn;
+    RpcUtilInst.rpcserver->registerFunc(serviceObjId, 1, &SensorEventConnection_enableDisable);
+    RpcUtilInst.rpcserver->registerFunc(serviceObjId, 2, &SensorEventConnection_setEventRate);
+    RpcUtilInst.rpcserver->registerFunc(serviceObjId, 3, &SensorEventConnection_flush);
+    RpcUtilInst.rpcserver->registerFunc(serviceObjId, 4, &SensorEventConnection_destroy);
+    
+    
+    RpcResponse* response = new RpcResponse();
+    response->ret = fifoCreate();
+    response->retSize = 0;
+    fifoPushData(response->ret, (char*) &serviceObjId, sizeof(serviceObjId));
+    response->retSize += sizeof(serviceObjId);
+    
+    ALOGE("rpc sensor service finish create the sensor connection, service Id: %d, method id: %d, seqNo: %d", request->serviceId, request->methodId, request->seqNo);
+    
+    return response;
+}
+
+__attribute__ ((visibility ("default"))) void registerRpcSensorService() {
+    RpcUtilInst.rpcserver->registerFunc(1, 1, &SensorService_getSensorList);
+    RpcUtilInst.rpcserver->registerFunc(1, 2, &SensorService_createSensorEventConnection);
 }
 
 // ---------------------------------------------------------------------------

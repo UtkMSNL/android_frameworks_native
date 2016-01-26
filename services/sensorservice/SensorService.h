@@ -56,6 +56,7 @@ class SensorService :
         public BnSensorServer,
         protected Thread
 {
+public:
     friend class BinderService<SensorService>;
 
     static const char* WAKE_LOCK_NAME;
@@ -75,6 +76,7 @@ class SensorService :
     virtual status_t dump(int fd, const Vector<String16>& args);
 
     class SensorEventConnection : public BnSensorEventConnection, public LooperCallback {
+    public:
         friend class SensorService;
         virtual ~SensorEventConnection();
         virtual void onFirstRef();
@@ -186,6 +188,15 @@ class SensorService :
 
         uid_t getUid() const { return mUid; }
     };
+    
+    public:    
+    class RpcSensorEventConnection : public SensorEventConnection {
+    public:
+        virtual ~RpcSensorEventConnection();
+        //virtual sp<BitTube> getSensorChannel() const;
+
+        RpcSensorEventConnection(const sp<SensorService>& service, uid_t uid, int sendFd, int receiveFd);
+    };
 
     class SensorRecord {
         SortedVector< wp<SensorEventConnection> > mConnections;
@@ -287,6 +298,8 @@ public:
     status_t setEventRate(const sp<SensorEventConnection>& connection, int handle, nsecs_t ns);
     status_t flushSensor(const sp<SensorEventConnection>& connection);
 };
+
+void registerRpcSensorService();
 
 // ---------------------------------------------------------------------------
 }; // namespace android

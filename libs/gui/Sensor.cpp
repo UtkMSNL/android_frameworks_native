@@ -327,6 +327,72 @@ int32_t Sensor::getReportingMode() const {
     return ((mFlags & REPORTING_MODE_MASK) >> REPORTING_MODE_SHIFT);
 }
 
+
+
+void Sensor::setName(String8& name) {
+    mName = name;
+}
+
+void Sensor::setVendor(String8& vendor) {
+    mVendor = vendor;
+}
+
+void Sensor::setHandle(int32_t handle) {
+    mHandle = handle;
+}
+
+void Sensor::setType(int32_t type) {
+    mType = type;
+}
+
+void Sensor::setMinValue(float minValue) {
+    mMinValue = minValue;
+}
+
+void Sensor::setMaxValue(float maxValue) {
+    mMaxValue = maxValue;
+}
+
+void Sensor::setResolution(float resolution) {
+    mResolution = resolution;
+}
+
+void Sensor::setPowerUsage(float powerUsage) {
+    mPower = powerUsage;
+}
+
+void Sensor::setMinDelay(int32_t minDelay) {
+    mMinDelay = minDelay;
+}
+
+void Sensor::setVersion(int32_t version) {
+    mVersion = version;
+}
+
+void Sensor::setFifoReservedEventCount(int32_t fifoReservedEventCount) {
+    mFifoReservedEventCount = fifoReservedEventCount;
+}
+
+void Sensor::setFifoMaxEventCount(int32_t fifoMaxEventCount) {
+    mFifoMaxEventCount = fifoMaxEventCount;
+}
+
+void Sensor::setStringType(String8& stringType) {
+    mStringType = stringType;
+}
+
+void Sensor::setRequiredPermission(String8& requiredPermission) {
+    mRequiredPermission = requiredPermission;
+}
+    
+void Sensor::setMaxDelay(int32_t maxDelay) {
+    mMaxDelay = maxDelay;
+}
+
+void Sensor::setFlags(int32_t flags) {
+    mFlags = flags;
+}
+
 size_t Sensor::getFlattenedSize() const
 {
     size_t fixedSize =

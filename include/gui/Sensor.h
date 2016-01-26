@@ -75,6 +75,23 @@ public:
     int32_t getFlags() const;
     bool isWakeUpSensor() const;
     int32_t getReportingMode() const;
+    
+    void setName(String8& name);
+    void setVendor(String8& vendor);
+    void setHandle(int32_t handle);
+    void setType(int32_t type);
+    void setMinValue(float minValue);
+    void setMaxValue(float maxValue);
+    void setResolution(float resolution);
+    void setPowerUsage(float powerUsage);
+    void setMinDelay(int32_t minDelay);
+    void setVersion(int32_t version);
+    void setFifoReservedEventCount(int32_t fifoReservedEventCount);
+    void setFifoMaxEventCount(int32_t fifoMaxEventCount);
+    void setStringType(String8& stringType);
+    void setRequiredPermission(String8& requiredPermission);
+    void setMaxDelay(int32_t maxDelay);
+    void setFlags(int32_t flags);
 
     // LightFlattenable protocol
     inline bool isFixedSize() const { return false; }

@@ -35,6 +35,7 @@ LOCAL_SRC_FILES:= \
 	SurfaceControl.cpp \
 	SurfaceComposerClient.cpp \
 	SyncFeatures.cpp \
+	RpcBitTube.cpp \
 
 LOCAL_SHARED_LIBRARIES := \
 	libbinder \
@@ -44,7 +45,11 @@ LOCAL_SHARED_LIBRARIES := \
 	libsync \
 	libui \
 	libutils \
-	liblog
+	liblog \
+	libsrpc \
+	libstlport \
+
+LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include
 
 # Executed only on QCOM BSPs
 ifeq ($(TARGET_USES_QCOM_BSP),true)

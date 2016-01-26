@@ -40,6 +40,9 @@ public:
     explicit BitTube(size_t bufsize);
 
     explicit BitTube(const Parcel& data);
+
+    explicit BitTube(bool isInit, size_t bufsize); // a constructor for supporting the rpc bit tube
+
     virtual ~BitTube();
 
     // check state after construction
@@ -67,17 +70,17 @@ public:
     }
 
     // parcels this BitTube
-    status_t writeToParcel(Parcel* reply) const;
+    virtual status_t writeToParcel(Parcel* reply) const;
 
-private:
+//private:
     void init(size_t rcvbuf, size_t sndbuf);
 
     // send a message. The write is guaranteed to send the whole message or fail.
-    ssize_t write(void const* vaddr, size_t size);
+    virtual ssize_t write(void const* vaddr, size_t size);
 
     // receive a message. the passed buffer must be at least as large as the
     // write call used to send the message, excess data is silently discarded.
-    ssize_t read(void* vaddr, size_t size);
+    virtual ssize_t read(void* vaddr, size_t size);
 
     int mSendFd;
     mutable int mReceiveFd;

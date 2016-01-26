@@ -58,6 +58,16 @@ BitTube::BitTube(const Parcel& data)
     }
 }
 
+BitTube::BitTube(bool isInit, size_t bufsize)
+    : mSendFd(-1), mReceiveFd(-1)
+{
+    if(isInit) {
+        init(bufsize, bufsize);
+    } else {
+    
+    }
+}
+
 BitTube::~BitTube()
 {
     if (mSendFd >= 0)
@@ -135,6 +145,7 @@ status_t BitTube::writeToParcel(Parcel* reply) const
     if (mReceiveFd < 0)
         return -EINVAL;
 
+    reply->writeInt32(1);
     status_t result = reply->writeDupFileDescriptor(mReceiveFd);
     close(mReceiveFd);
     mReceiveFd = -1;

@@ -49,6 +49,9 @@ public:
         Parcel data, reply;
         data.writeInterfaceToken(IDisplayEventConnection::getInterfaceDescriptor());
         remote()->transact(GET_DATA_CHANNEL, data, &reply);
+        // modified by yli118 - to support rpc bit tube, add a type read to see if it is a rpc bit tube
+        reply.readInt32();
+        // modify end
         return new BitTube(reply);
     }
 

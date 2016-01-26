@@ -12,7 +12,8 @@ LOCAL_SRC_FILES:= \
     SensorDevice.cpp \
     SensorFusion.cpp \
     SensorInterface.cpp \
-    SensorService.cpp
+    SensorService.cpp \
+    RpcSensorService.cpp
 
 LOCAL_CFLAGS:= -DLOG_TAG=\"SensorService\"
 
@@ -26,7 +27,11 @@ LOCAL_SHARED_LIBRARIES := \
 	liblog \
 	libbinder \
 	libui \
-	libgui
+	libgui \
+	libsrpc \
+	libstlport
+
+LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include
 
 LOCAL_MODULE:= libsensorservice
 
