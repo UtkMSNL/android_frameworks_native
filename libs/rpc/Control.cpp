@@ -97,21 +97,29 @@ typedef struct ReadInd {
     u4 rpos;
     MsgHeader rhdr;
     char rbuf[2*MAX_CONTROL_VPACKET_SIZE];
+#ifdef USE_COMPRESSION
     char rbuftmp[2*MAX_CONTROL_VPACKET_SIZE];
+#endif
     
     ReadInd() : rst(0), rsz(sizeof(MsgHeader)), rpos(0) {}
 } ReadInd;
 
 typedef struct WriteInd {
+    // flags to indicate if the write is for the header or the data content
     int wst; 
+    // indicate that how many byte should be written for the next write
     u4 wsz; 
+    // the position of the current write
     u4 wpos;
-    //u4 owsz;
+    // the original data size before compression
+    u4 owsz;
     MsgHeader whdr;
     char* wbuf;
+#ifdef USE_COMPRESSION
     char wtmpbuf[2*MAX_CONTROL_VPACKET_SIZE];
+#endif
     
-    WriteInd() : wst(-1), wsz(sizeof(MsgHeader)), wpos(0){} //, owsz(-1) {}
+    WriteInd() : wst(-1), wsz(sizeof(MsgHeader)), wpos(0), owsz(-1) {}
 } WriteInd;
 
 /** Lock for retrieving the next response id */
@@ -199,18 +207,22 @@ void message_loop(RpcEndpoint* endpoint) {
 
                 wind->whdr.sz = htonl(wind->whdr.sz < MAX_CONTROL_VPACKET_SIZE ?
                                 wind->whdr.sz : MAX_CONTROL_VPACKET_SIZE);
-                //wind->owsz = ntohl(wind->whdr.sz);
+                wind->owsz = ntohl(wind->whdr.sz);
 
                 //sent_bytes += ntohl(whdr.sz);
 #ifdef USE_COMPRESSION
                 /* Perform the compression with zlib. */
+                if (ntohl(wind->whdr.sz) != 0) {
                 wstrm.avail_in = ntohl(wind->whdr.sz);
                 wstrm.next_in = (unsigned char*)wind->wbuf;
                 wstrm.avail_out = sizeof(wind->wtmpbuf);
                 wstrm.next_out = (unsigned char*)(wind->wtmpbuf);
-                deflate(&wstrm, Z_SYNC_FLUSH);
+                //ALOGE("rpc service control start to deflate, %d - %d - %d", ntohl(wind->whdr.sz), wind->whdr.seqNo, ntohl(wind->whdr.totalSz));
+                int ret = deflate(&wstrm, Z_SYNC_FLUSH);
+                //ALOGE("rpc service control after deflating, %d - %d - %d - %d, %d", ntohl(wind->whdr.sz), sizeof(wind->wtmpbuf) - wstrm.avail_out, ret, Z_OK, wstrm.avail_in);
                 wind->wbuf = wind->wtmpbuf;
                 wind->whdr.sz = htonl(sizeof(wind->wtmpbuf) - wstrm.avail_out);
+                }
 #endif
                 //csent_bytes += ntohl(whdr.sz);
             }/* else if(wst == -1 && sent_bytes != sent_acked_bytes) {
@@ -333,7 +345,8 @@ void message_loop(RpcEndpoint* endpoint) {
                         rstrm.next_in = (unsigned char*)rind->rbuf;
                         rstrm.avail_out = sizeof(rind->rbuftmp);
                         rstrm.next_out = (unsigned char*)rind->rbuftmp;
-                        inflate(&rstrm, Z_SYNC_FLUSH);
+                        int ret = inflate(&rstrm, Z_SYNC_FLUSH);
+                        //ALOGE("rpc service control the inflate size: %d - %d", rstrm.avail_out, ret);
 #endif
 
                         /*cread_bytes += rsz;
@@ -467,7 +480,7 @@ void message_loop(RpcEndpoint* endpoint) {
                         RpcMessage* rpcMsg = outRpcMsgs[s].front();
                         if(rpcMsg->type == RpcMessage::MSG_TYPE_REQUEST) {
                             RpcRequest* rpcReq = static_cast<RpcRequest*> (rpcMsg);
-                            fifoPopBytes(rpcReq->args, wind->wsz);
+                            fifoPopBytes(rpcReq->args, wind->owsz);
                             if(fifoEmpty(rpcReq->args)) {
                                 pthread_mutex_lock(&outRpcLock); {
                                     outRpcMsgs[s].pop();
@@ -490,7 +503,7 @@ void message_loop(RpcEndpoint* endpoint) {
                             }
                         } else {
                             RpcResponse* rpcRes = static_cast<RpcResponse*> (rpcMsg);
-                            fifoPopBytes(rpcRes->ret, wind->wsz);
+                            fifoPopBytes(rpcRes->ret, wind->owsz);
                             if(fifoEmpty(rpcRes->ret)) {
                                 pthread_mutex_lock(&outRpcLock); {
                                     outRpcMsgs[s].pop();

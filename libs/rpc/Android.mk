@@ -26,8 +26,9 @@ include $(CLEAR_VARS)
 
 #LOCAL_LDLIBS += -lpthread
 LOCAL_MODULE := libsrpc
-LOCAL_SHARED_LIBRARIES += liblog libcutils libutils libstlport
-LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include
+LOCAL_SHARED_LIBRARIES += liblog libcutils libutils libstlport libz
+#LOCAL_WHOLE_STATIC_LIBRARIES += 
+LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include external/zlib
 LOCAL_SRC_FILES := $(sources)
 
 include $(BUILD_SHARED_LIBRARY)
