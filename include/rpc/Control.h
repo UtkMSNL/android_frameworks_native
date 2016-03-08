@@ -16,6 +16,10 @@ void setupConnection(int socketFd);
 
 void controlInit();
 
+void acquireLock(u8 idxId);
+
+void releaseLock(u8 idxId);
+
 // ---------------------------------------------------------------------------
 }; // namespace android
 

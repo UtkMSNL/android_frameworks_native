@@ -143,6 +143,7 @@ int Surface::hook_dequeueBuffer_DEPRECATED(ANativeWindow* window,
     Surface* c = getSelf(window);
     ANativeWindowBuffer* buf = NULL;
     int fenceFd = -1;
+    //ALOGE("rpc camera service start to dequeueBuffer in surface");
     int result = c->dequeueBuffer(&buf, &fenceFd);
 
     if (result != NO_ERROR) return result;
@@ -240,6 +241,7 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
     sp<Fence> fence;
     status_t result = mGraphicBufferProducer->dequeueBuffer(&buf, &fence, swapIntervalZero,
             reqW, reqH, reqFormat, reqUsage);
+   //ALOGE("rpc camera service successfully dequeued buffer with parameters: %d, %d, %d, %d", reqW, reqH, reqFormat, reqUsage);
 
     if (result < 0) {
         ALOGV("dequeueBuffer: IGraphicBufferProducer::dequeueBuffer(%d, %d, %d, %d, %d)"
@@ -344,6 +346,7 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     // Make sure the crop rectangle is entirely inside the buffer.
     Rect crop;
     mCrop.intersect(Rect(buffer->width, buffer->height), &crop);
+    
 
 #ifdef QCOM_BSP
     Rect dirtyRect = mDirtyRect;
@@ -361,6 +364,8 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
 #endif
             mScalingMode, mTransform ^ mStickyTransform, mSwapIntervalZero,
             fence, mStickyTransform);
+   //ALOGE("rpc camera service successfully queued buffer with parameters: %d, %d, %d, %d, %d, %d", crop.left, crop.top, crop.right, crop.bottom, buffer->width, buffer->height);
+    //ALOGE("rpc camera service queuing buffer with parameters: mScalingMode[%d], mTransform ^ mStickyTransform[%d], mSwapIntervalZero[%d], mStickyTransform[%d]", mScalingMode, mTransform ^ mStickyTransform, mSwapIntervalZero, mStickyTransform);
     status_t err = mGraphicBufferProducer->queueBuffer(i, input, &output);
     if (err != OK)  {
         ALOGE("queueBuffer: error queuing buffer to SurfaceTexture, %d", err);

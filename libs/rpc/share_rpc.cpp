@@ -18,9 +18,12 @@
 #include <cstdlib>
 #include <rpc/Control.h>
 #include <rpc/share_rpc.h>
+#include <binder/IPCThreadState.h>
 #include <utils/Log.h>
 #include "time.h"
 #include <sys/time.h>
+
+#include <rpc/sbuffer_sync.h>
 
 //#define CPU_TIME 0
 
@@ -38,8 +41,8 @@ clock_t requestStartClock, requestSendClock, responseStartClock, responseSendClo
 struct timeval requestStartClock, requestSendClock, responseStartClock, responseSendClock, reqResGetStart, reqResFinishClock;
 #endif
 
-extern pthread_cond_t rpcResCond;
-extern pthread_mutex_t rpcResLock;
+extern std::map<u8, pthread_mutex_t*> idxMtxMaps;
+extern std::map<u8, pthread_cond_t*> idxCondMaps;
 
 extern std::map<u8, RpcResponse*> arrivedResps;
 
@@ -50,19 +53,22 @@ void RpcEndpoint::init() {
 }
 
 RpcResponse* RpcEndpoint::doRpc(RpcRequest* rpcReq) {
+    struct timeval start, finish;
+    gettimeofday(&start, NULL);
+    
     pthread_mutex_lock(&nextSeqNoLock); {
         rpcReq->seqNo = nextSequenceNo++;
     } pthread_mutex_unlock(&nextSeqNoLock);
-    addOutRpcMsg(rpcReq);
     u8 idxId = rpcReq->socketFd;
     idxId <<= 4;
     idxId += rpcReq->seqNo;
-    int serviceId = rpcReq->serviceId;
-    int methodId = rpcReq->methodId;
-    int seqNo = rpcReq->seqNo;
-    pthread_mutex_lock(&rpcResLock); 
+    acquireLock(idxId);
+    pthread_mutex_lock(idxMtxMaps[idxId]); 
+    addOutRpcMsg(rpcReq);
+    
     while(true) {
-        pthread_cond_wait(&rpcResCond, &rpcResLock);
+        pthread_cond_wait(idxCondMaps[idxId], idxMtxMaps[idxId]);
+    //ALOGE("rpc audio service the do rpc signaling the thread idx: %lld, sockFd: %d, seq: %d", idxId, rpcReq->socketFd, rpcReq->seqNo);
         if(arrivedResps.find(idxId) != arrivedResps.end()) {
 #ifdef LOG_RPC_TIME
             gettimeofday(&finish, NULL);
@@ -74,7 +80,11 @@ RpcResponse* RpcEndpoint::doRpc(RpcRequest* rpcReq) {
     }
     RpcResponse* rpcRes = arrivedResps[idxId];
     arrivedResps.erase(idxId);
-    pthread_mutex_unlock(&rpcResLock);
+    pthread_mutex_unlock(idxMtxMaps[idxId]);
+    releaseLock(idxId);
+    
+    gettimeofday(&finish, NULL);
+    ALOGI("rpc audio service the do rpc time: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);// idx: %lld, sockFd: %d, seq: %d, mtx: %d, cond: %d", idxId, rpcReq->socketFd, rpcReq->seqNo, idxMtxMaps[idxId], idxCondMaps[idxId]);
     return rpcRes;
 }
 
@@ -83,7 +93,6 @@ void RpcEndpoint::serverHandleRpc(RpcRequest* rpcReq) {
     funcId <<= 4;
     funcId += rpcReq->methodId;
     RpcCallFunc callFunc = registeredFuncs[funcId];
-    //ALOGE("rpc sensor service calling function %d - %d", rpcReq->serviceId, rpcReq->methodId);
     RpcResponse* rpcRes = (*callFunc)(rpcReq);
     rpcRes->seqNo = rpcReq->seqNo;
     rpcRes->socketFd = rpcReq->socketFd;
@@ -109,7 +118,7 @@ static int connectServer(RpcClient* client, struct sockaddr* addr) {
     }
     if(connect(s, addr, sizeof(struct sockaddr))) {
         if(s != -1) {
-            perror("connect to the server failed!");
+            ALOGE("rpc audio service connection is failed, %s", strerror(errno));
             close(s);
             return -1;
         }
@@ -123,11 +132,17 @@ static int connectServer(RpcClient* client, struct sockaddr* addr) {
         close(s);
         return -1;
     }
+    int socketFdInServer;
+    if(sizeof(socketFdInServer) != read(s, &socketFdInServer, sizeof(socketFdInServer))) {
+        close(s);
+        return -1;
+    }
     if(magic_value != 0x55) {
         perror("Bad magic value from server");
         close(s);
         return -1;
     }
+    client->socketFdInServer = socketFdInServer;
     client->socketFd = s;
     setupConnection(s);
     return 0;
@@ -198,15 +213,19 @@ static void* bindServer(void* args) {
                 perror("accept socket connection failed");
             } else {
                 u1 magic_value = 0x55;
-                if(1 != write(s_cli, &magic_value, 1)) {
+                if (1 != write(s_cli, &magic_value, 1)) {
                     close(s_cli);
                     continue;
                 }
-                if(1 != read(s_cli, &magic_value, 1)) {
+                if (sizeof(s_cli) != write(s_cli, &s_cli, sizeof(s_cli))) {
                     close(s_cli);
                     continue;
                 }
-                if(magic_value != 0x55) {
+                if (1 != read(s_cli, &magic_value, 1)) {
+                    close(s_cli);
+                    continue;
+                }
+                if (magic_value != 0x55) {
                     perror("Bad magic value from server");
                     close(s_cli);
                     continue;
@@ -225,36 +244,6 @@ void RpcServer::startServer(int port) {
     pthread_create(&bindThread, NULL, bindServer, argstruct);
     pthread_t msgThread;
     pthread_create(&msgThread, NULL, startMessageLoop, this);
-}
-
-RpcUtil RpcUtilInst;
-
-void readRpcConf() {
-    std::string line;
-    std::ifstream confFile("/data/data/system_server/native.service.config.properties");
-    // check the existence of the file
-    if (!confFile.good()) {
-        RpcUtilInst.isShareEnabled = 0;
-        confFile.close();
-        return;
-    }
-    // line indicates if share is enabled
-    std::getline(confFile, line);
-    RpcUtilInst.isShareEnabled = std::atoi(line.c_str());
-    // indicates if it is a server
-    std::getline(confFile, line);
-    RpcUtilInst.isServer = std::atoi(line.c_str());
-    // indicates the server address
-    std::getline(confFile, line);
-    strcpy(RpcUtilInst.serverAddr, line.c_str());
-    // indicates the server port
-    std::getline(confFile, line);
-    RpcUtilInst.serverPort = std::atoi(line.c_str());
-    // indicates the channel port
-    std::getline(confFile, line);
-    RpcUtilInst.sensorChannelPort = std::atoi(line.c_str());
-    confFile.close();
-    ALOGE("rpc sensor service conf isenabled: %d, isServer: %d, serverAddr: %s, port: %d, channelPort: %d", RpcUtilInst.isShareEnabled, RpcUtilInst.isServer, RpcUtilInst.serverAddr, RpcUtilInst.serverPort, RpcUtilInst.sensorChannelPort);
 }
 
 /*static void* initRTTServer(void* arg) {
@@ -352,20 +341,44 @@ static void* initRTTClient(void* arg) {
     }
 }*/
 
-void initRpcEndpoint() {
-    RpcUtilInst.serverAddr = new char[16];
-    int port;
-    readRpcConf();
-    if(!RpcUtilInst.isShareEnabled) {
+std::ifstream* readRpcConfBase(const char* fileName, RpcUtilBase* rpcUtilBaseInst) {
+    rpcUtilBaseInst->isInited = 1;
+    std::string line;
+    std::ifstream confFile(fileName);
+    // check the existence of the file
+    if (!confFile.good()) {
+        rpcUtilBaseInst->isShareEnabled = 0;
+        confFile.close();
+        return NULL;
+    }
+    // line indicates if share is enabled
+    std::getline(confFile, line);
+    rpcUtilBaseInst->isShareEnabled = std::atoi(line.c_str());
+    // indicates if it is a server
+    std::getline(confFile, line);
+    rpcUtilBaseInst->isServer = std::atoi(line.c_str());
+    // indicates the server address
+    std::getline(confFile, line);
+    rpcUtilBaseInst->serverAddr = new char[16];
+    strcpy(rpcUtilBaseInst->serverAddr, line.c_str());
+    // indicates the server port
+    std::getline(confFile, line);
+    rpcUtilBaseInst->serverPort = std::atoi(line.c_str());
+    
+    return &confFile;
+}
+
+void initRpcEndpointBase(RpcUtilBase* rpcUtilBaseInst) {
+    if(!rpcUtilBaseInst->isShareEnabled) {
         return;
     }
-    RpcUtilInst.nextServiceObjId = 10000;
+    rpcUtilBaseInst->nextServiceObjId = 10000;
     
-    if(RpcUtilInst.isServer) {
+    if(rpcUtilBaseInst->isServer) {
         RpcServer* server = new RpcServer();
-        server->startServer(RpcUtilInst.serverPort);
-        RpcUtilInst.rpcserver = server;
-        RpcUtilInst.isConnected = 0;
+        server->startServer(rpcUtilBaseInst->serverPort);
+        rpcUtilBaseInst->rpcserver = server;
+        rpcUtilBaseInst->isConnected = 0;
         //pthread_t rttseverThread;
         //pthread_create(&rttseverThread, NULL, initRTTServer, NULL);
     } else {
@@ -375,17 +388,89 @@ void initRpcEndpoint() {
             struct sockaddr addr;
         } addr;
         addr.addrin.sin_family = AF_INET;
-        addr.addrin.sin_port = htons(RpcUtilInst.serverPort);
-        inet_aton(RpcUtilInst.serverAddr, &addr.addrin.sin_addr);
+        addr.addrin.sin_port = htons(rpcUtilBaseInst->serverPort);
+        inet_aton(rpcUtilBaseInst->serverAddr, &addr.addrin.sin_addr);
         client->startClient(&addr.addr);
-        RpcUtilInst.rpcclient = client;
-        RpcUtilInst.isConnected = 1;
+        rpcUtilBaseInst->rpcclient = client;
+        rpcUtilBaseInst->isConnected = 1;
         //pthread_t rttclientThread;
         //pthread_create(&rttclientThread, NULL, initRTTClient, NULL);
     }
 }
 
-RpcPairFds sensorChannelFds;
+RpcUtil RpcUtilInst;
+
+void readRpcConf() {
+    // initialize the service id
+    std::ifstream* confFile = readRpcConfBase("/data/data/system_server/native.service.config.properties", &RpcUtilInst);
+    if(confFile == NULL) {
+        return;
+    }
+    std::string line;
+    // indicates the channel port
+    std::getline(*confFile, line);
+    RpcUtilInst.sensorChannelPort = std::atoi(line.c_str());
+    confFile->close();
+    ALOGE("rpc sensor service conf isenabled: %d, isServer: %d, serverAddr: %s, port: %d, channelPort: %d", RpcUtilInst.isShareEnabled, RpcUtilInst.isServer, RpcUtilInst.serverAddr, RpcUtilInst.serverPort, RpcUtilInst.sensorChannelPort);
+}
+
+void initRpcEndpoint() {
+    readRpcConf();
+    initRpcEndpointBase(&RpcUtilInst);
+}
+
+AudioRpcUtil AudioRpcUtilInst;
+
+void readAudioRpcConf() {
+    AudioRpcUtilInst.AUDIO_SERVICE_ID = 2;
+    AudioRpcUtilInst.AUDIO_POLICY_SERVICE_ID = 3;
+    // initialize the service id
+    std::ifstream* confFile = readRpcConfBase("/data/data/media_server/audio.service.config.properties", &AudioRpcUtilInst);
+    if(confFile == NULL) {
+        return;
+    }
+    confFile->close();
+}
+
+bool isNetworkReady() {
+    // use the existence of a file to check if the network is ready
+    std::ifstream netfile("/data/data/media_server/net_ready");
+    bool result = netfile.good();
+    netfile.close();
+    std::remove("/data/data/media_server/net_ready");
+    return result;
+}
+
+void initAudioRpcEndpoint() {
+    readAudioRpcConf();
+    initRpcEndpointBase(&AudioRpcUtilInst);
+    
+    ALOGE("rpc audio service conf isenabled: %d, isServer: %d, serverAddr: %s, port: %d", AudioRpcUtilInst.isShareEnabled, AudioRpcUtilInst.isServer, AudioRpcUtilInst.serverAddr, AudioRpcUtilInst.serverPort);
+    
+    if (AudioRpcUtilInst.isShareEnabled && AudioRpcUtilInst.isServer) {
+        RpcBufferUtil::bufferUtilInit(AudioRpcUtilInst.rpcserver);
+    }
+}
+
+CameraRpcUtil CameraRpcUtilInst;
+
+void readCameraRpcConf() {
+    CameraRpcUtilInst.CAMERA_SERVICE_ID = 4;
+    CameraRpcUtilInst.CAMERA_PREVIEW_REFRESH_ID = 5;
+    // initialize the service id
+    std::ifstream* confFile = readRpcConfBase("/data/data/media_server/camera.service.config.properties", &CameraRpcUtilInst);
+    if(confFile == NULL) {
+        return;
+    }
+    confFile->close();
+}
+
+void initCameraRpcEndpoint() {
+    readCameraRpcConf();
+    initRpcEndpointBase(&CameraRpcUtilInst);
+    
+    ALOGE("rpc camera service conf isenabled: %d, isServer: %d, serverAddr: %s, port: %d", CameraRpcUtilInst.isShareEnabled, CameraRpcUtilInst.isServer, CameraRpcUtilInst.serverAddr, CameraRpcUtilInst.serverPort);
+}
 
 // ---------------------------------------------------------------------------
 

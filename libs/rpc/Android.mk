@@ -16,9 +16,10 @@
 sources := \
     thread_pool.cpp \
     FifoBuffer.cpp \
-    Control.cpp \
-    share_rpc.cpp
-
+    Control.cpp  \
+    share_rpc.cpp \
+    sbuffer_sync.cpp
+    
 LOCAL_PATH:= $(call my-dir)
 
 include $(CLEAR_VARS)

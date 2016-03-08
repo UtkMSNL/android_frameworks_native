@@ -3,11 +3,12 @@
 #include <stdlib.h>
 #include <cassert>
 #include <rpc/FifoBuffer.h>
+#include <utils/Log.h>
 
 namespace android {
 // ---------------------------------------------------------------------------
 
-#define BUFFERSIZE (1 << 16) // 16Kb
+#define BUFFERSIZE (1 << 14) // 16Kb
 
 FifoBuffer* fifoCreate() {
     FifoBuffer* fb = new FifoBuffer();

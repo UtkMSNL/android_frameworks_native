@@ -106,20 +106,24 @@ typedef struct WriteInd {
     int wst; 
     u4 wsz; 
     u4 wpos;
-    u4 owsz;
+    //u4 owsz;
     MsgHeader whdr;
     char* wbuf;
     char wtmpbuf[2*MAX_CONTROL_VPACKET_SIZE];
     
-    WriteInd() : wst(-1), wsz(sizeof(MsgHeader)), wpos(0), owsz(-1) {}
+    WriteInd() : wst(-1), wsz(sizeof(MsgHeader)), wpos(0){} //, owsz(-1) {}
 } WriteInd;
 
 /** Lock for retrieving the next response id */
 pthread_mutex_t outRpcLock;
 
 /** condition for rpc to recieve response */
-pthread_cond_t rpcResCond;
-pthread_mutex_t rpcResLock;
+std::map<u8, pthread_mutex_t*> idxMtxMaps;
+std::map<u8, pthread_cond_t*> idxCondMaps;
+std::vector<pthread_mutex_t*> mtxPool;
+std::vector<pthread_cond_t*> condPool;
+//pthread_cond_t rpcResCond;
+pthread_mutex_t* rpcResLock;
 
 /** A queue to store the list of rpc requests */
 std::map<int, std::queue<RpcMessage*> > outRpcMsgs;
@@ -195,7 +199,7 @@ void message_loop(RpcEndpoint* endpoint) {
 
                 wind->whdr.sz = htonl(wind->whdr.sz < MAX_CONTROL_VPACKET_SIZE ?
                                 wind->whdr.sz : MAX_CONTROL_VPACKET_SIZE);
-                wind->owsz = ntohl(wind->whdr.sz);
+                //wind->owsz = ntohl(wind->whdr.sz);
 
                 //sent_bytes += ntohl(whdr.sz);
 #ifdef USE_COMPRESSION
@@ -305,11 +309,12 @@ void message_loop(RpcEndpoint* endpoint) {
                             rpcRes->errorNo = rind->rhdr.res.errorNo;
                             rpcRes->retSize = rind->rhdr.totalSz;
                                  
-                            pthread_mutex_lock(&rpcResLock); 
+                            pthread_mutex_lock(idxMtxMaps[idxId]); 
                             arrivedResps[idxId] = rpcRes;
                             // notify the waiting rpc threads
-                            pthread_cond_signal(&rpcResCond);
-                            pthread_mutex_unlock(&rpcResLock);
+                            //ALOGE("rpc audio service the control signal the idx: %lld, sockfd: %d, seq: %d, mtx: %d, cond: %d", idxId, sockFd, rind->rhdr.seqNo, idxMtxMaps[idxId], idxCondMaps[idxId]);
+                            pthread_cond_signal(idxCondMaps[idxId]);
+                            pthread_mutex_unlock(idxMtxMaps[idxId]);
                         }
 
                         rind->rst = 0;
@@ -370,7 +375,7 @@ void message_loop(RpcEndpoint* endpoint) {
                                 fifoPushData(rpcReq->args, rind->rbuf, rind->rsz);
 #endif
                                 // if have recieved all the data, put to a working thread
-                                if(rpcReq->argsSize == fifoGetBufferSize(rpcReq->args)) {
+                                if(rpcReq->argsSize == fifoSize(rpcReq->args)) {
                                     inMsgMaps.erase(idxId);
 #ifdef LOG_RPC_TIME
                                     gettimeofday(&finish, NULL);
@@ -407,13 +412,13 @@ void message_loop(RpcEndpoint* endpoint) {
                                 fifoPushData(rpcRes->ret, rind->rbuf, rind->rsz);
 #endif
                                 //if have received all the data, awake a waiting rpc thread
-                                if(rpcRes->retSize == fifoGetBufferSize(rpcRes->ret)) {
+                                if(rpcRes->retSize == fifoSize(rpcRes->ret)) {
 #ifdef CPU_TIME
                                     reqResGetStart = clock();
 #else
                                     gettimeofday(&reqResGetStart, NULL);
 #endif
-                                    pthread_mutex_lock(&rpcResLock); 
+                                    pthread_mutex_lock(idxMtxMaps[idxId]); 
                                     arrivedResps[idxId] = rpcRes;
                                     inMsgMaps.erase(idxId);
 #ifdef LOG_RPC_TIME
@@ -422,8 +427,9 @@ void message_loop(RpcEndpoint* endpoint) {
                                     start = finish;
 #endif
                                     // notify the waiting rpc threads
-                                    pthread_cond_signal(&rpcResCond);
-                                    pthread_mutex_unlock(&rpcResLock);
+                            //ALOGE("rpc audio service the control signal the idx: %lld, sockfd: %d, seq: %d, mtx: %d, cond: %d", idxId, sockFd, rind->rhdr.seqNo, idxMtxMaps[idxId], idxCondMaps[idxId]);
+                                    pthread_cond_signal(idxCondMaps[idxId]);
+                                    pthread_mutex_unlock(idxMtxMaps[idxId]);
                                 }
                             }
                         }
@@ -461,17 +467,17 @@ void message_loop(RpcEndpoint* endpoint) {
                         RpcMessage* rpcMsg = outRpcMsgs[s].front();
                         if(rpcMsg->type == RpcMessage::MSG_TYPE_REQUEST) {
                             RpcRequest* rpcReq = static_cast<RpcRequest*> (rpcMsg);
-                            fifoPopBytes(rpcReq->args, wind->owsz);
+                            fifoPopBytes(rpcReq->args, wind->wsz);
                             if(fifoEmpty(rpcReq->args)) {
                                 pthread_mutex_lock(&outRpcLock); {
                                     outRpcMsgs[s].pop();
                                 } pthread_mutex_unlock(&outRpcLock);
 #ifdef CPU_TIME
                                 requestSendClock = clock();
-                                ALOGE("rpc sensor service experiment request sending time: %f, seqNo: %d", ((double (requestSendClock - requestStartClock)) / CLOCKS_PER_SEC) * 1000000, rpcReq->seqNo);
+                                //ALOGE("rpc sensor service experiment request sending time: %f, seqNo: %d", ((double (requestSendClock - requestStartClock)) / CLOCKS_PER_SEC) * 1000000, rpcReq->seqNo);
 #else
                                 gettimeofday(&requestSendClock, NULL);
-                                ALOGE("rpc sensor service experiment request sending time: %ld, seqNo: %d", (requestSendClock.tv_sec - requestStartClock.tv_sec) * 1000000 + requestSendClock.tv_usec - requestStartClock.tv_usec, rpcReq->seqNo);
+                                //ALOGE("rpc sensor service experiment request sending time: %ld, seqNo: %d", (requestSendClock.tv_sec - requestStartClock.tv_sec) * 1000000 + requestSendClock.tv_usec - requestStartClock.tv_usec, rpcReq->seqNo);
 #endif
                                 fifoDestroy(rpcReq->args);
                                 delete rpcReq;
@@ -484,17 +490,17 @@ void message_loop(RpcEndpoint* endpoint) {
                             }
                         } else {
                             RpcResponse* rpcRes = static_cast<RpcResponse*> (rpcMsg);
-                            fifoPopBytes(rpcRes->ret, wind->owsz);
+                            fifoPopBytes(rpcRes->ret, wind->wsz);
                             if(fifoEmpty(rpcRes->ret)) {
                                 pthread_mutex_lock(&outRpcLock); {
                                     outRpcMsgs[s].pop();
                                 } pthread_mutex_unlock(&outRpcLock);
 #ifdef CPU_TIME
                                 responseSendClock = clock();
-                                ALOGE("rpc sensor service experiment response sending time: %f, seqNo: %d",  ((double (responseSendClock - responseStartClock)) / CLOCKS_PER_SEC) * 1000000, rpcRes->seqNo);
+                                //ALOGE("rpc sensor service experiment response sending time: %f, seqNo: %d",  ((double (responseSendClock - responseStartClock)) / CLOCKS_PER_SEC) * 1000000, rpcRes->seqNo);
 #else
                                 gettimeofday(&responseSendClock, NULL);
-                                ALOGE("rpc sensor service experiment response sending time: %ld, seqNo: %d",  (responseSendClock.tv_sec - responseStartClock.tv_sec) * 1000000 + responseSendClock.tv_usec - responseStartClock.tv_usec, rpcRes->seqNo);
+                                //ALOGE("rpc sensor service experiment response sending time: %ld, seqNo: %d",  (responseSendClock.tv_sec - responseStartClock.tv_sec) * 1000000 + responseSendClock.tv_usec - responseStartClock.tv_usec, rpcRes->seqNo);
 #endif
                                 
                                 fifoDestroy(rpcRes->ret);
@@ -557,13 +563,46 @@ void setupConnection(int socketFd) {
     // todo: see if we need to initiate outRpcMsgs with this socket fd
 }
 
+void acquireLock(u8 idxId)
+{
+    pthread_mutex_lock(rpcResLock);
+    if (mtxPool.empty()) {
+        pthread_mutex_t* mutex = new pthread_mutex_t();
+        pthread_mutex_init(mutex, NULL);
+        mtxPool.push_back(mutex);
+        pthread_cond_t* cond = new pthread_cond_t();
+        pthread_cond_init(cond, NULL);
+        condPool.push_back(cond);
+    }
+    pthread_mutex_t* mtx = mtxPool.back();
+    mtxPool.pop_back();
+    pthread_cond_t* cond = condPool.back();
+    condPool.pop_back();
+    idxMtxMaps[idxId] = mtx;
+    idxCondMaps[idxId] = cond;
+    pthread_mutex_unlock(rpcResLock);
+}
+
+void releaseLock(u8 idxId)
+{
+    pthread_mutex_lock(rpcResLock);
+    pthread_mutex_t* mtx = idxMtxMaps[idxId];
+    mtxPool.push_back(mtx);
+    pthread_cond_t* cond = idxCondMaps[idxId];
+    condPool.push_back(cond);
+    idxMtxMaps.erase(idxId);
+    idxCondMaps.erase(idxId);
+    pthread_mutex_unlock(rpcResLock);
+}
+
 void controlInit() {
-    rpcThdPool = new ThreadPool(10);
+    int poolSize = 10;
+    rpcThdPool = new ThreadPool(poolSize);
     rpcThdPool->initializeThreads();
     
     pthread_mutex_init(&outRpcLock, NULL);
-    pthread_mutex_init(&rpcResLock, NULL);
-    pthread_cond_init(&rpcResCond, NULL);
+    rpcResLock = new pthread_mutex_t();
+    pthread_mutex_init(rpcResLock, NULL);
     
     pipe(rpcNetPipe);
 }

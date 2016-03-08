@@ -42,6 +42,28 @@ public:
         RpcMessage::type = RpcMessage::MSG_TYPE_REQUEST;
         args = NULL;
     }
+    
+    RpcRequest(u4 vServiceId, u4 vMethodId, int vSocketFd, bool hasArg)
+        : serviceId(vServiceId),
+          methodId(vMethodId),
+          argsSize(0) {
+        RpcMessage::type = RpcMessage::MSG_TYPE_REQUEST;
+        RpcMessage::socketFd = vSocketFd;
+        if (hasArg) {
+            args = fifoCreate();
+        } else {
+            args = NULL;
+        }
+    }
+    
+    void putArg(char* data, int size) {
+        fifoPushData(args, data, size);
+        argsSize += size;
+    }
+    
+    void getArg(char* data, int size) {
+        fifoReadBuffer(args, data, size);
+    }
 };
 
 /* A struct representing the data structure of a rpc response */
@@ -55,6 +77,30 @@ public:
     RpcResponse() {
         RpcMessage::type = RpcMessage::MSG_TYPE_RESPONSE;
         ret = NULL;
+    }
+    
+    RpcResponse(bool hasRet)
+        : retSize(0) {
+        RpcMessage::type = RpcMessage::MSG_TYPE_RESPONSE;
+        if (hasRet) {
+            ret = fifoCreate();
+        } else {
+            ret = NULL;
+        }
+    }
+    
+    ~RpcResponse() {
+        fifoDestroy(ret);
+        ret = NULL;
+    }
+    
+    void putRet(char* data, int size) {
+        fifoPushData(ret, data, size);
+        retSize += size;
+    }
+    
+    void getRet(char* data, int size) {
+        fifoReadBuffer(ret, data, size);
     }
 };
 

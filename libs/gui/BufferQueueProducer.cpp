@@ -687,7 +687,7 @@ status_t BufferQueueProducer::queueBuffer(int slot,
         while (callbackTicket != mCurrentCallbackTicket) {
             mCallbackCondition.wait(mCallbackMutex);
         }
-
+        
         if (frameAvailableListener != NULL) {
             frameAvailableListener->onFrameAvailable(item);
         } else if (frameReplacedListener != NULL) {

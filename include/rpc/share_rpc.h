@@ -44,6 +44,7 @@ class RpcClient : public RpcEndpoint
 {
 public:
     int socketFd;       /* the socket fd to the server */
+    int socketFdInServer; /* the socket fd of this connection in the server */
     void startClient(struct sockaddr* addr);
 };
 
@@ -70,8 +71,10 @@ public:
     }
 };
 
-struct RpcUtil {
+struct RpcUtilBase {
     int isShareEnabled;
+    
+    int isInited;
     
     int isServer;
     
@@ -91,24 +94,49 @@ struct RpcUtil {
     
     int nextServiceObjId;
     
+    RpcUtilBase() : isShareEnabled(0), isInited(0), isConnected(0) {}
+};
+
+struct RpcUtil : public RpcUtilBase {
+    
     int sensorChannelPort;
 };
 
+struct AudioRpcUtil : public RpcUtilBase {
+    u4 AUDIO_SERVICE_ID;
+    
+    u4 AUDIO_POLICY_SERVICE_ID;
+    
+    void* audioFlinger;
+    
+    void* audioPolicyService;
+};
+
+struct CameraRpcUtil : public RpcUtilBase {
+    u4 CAMERA_SERVICE_ID;
+    
+    u4 CAMERA_PREVIEW_REFRESH_ID;
+    
+    void* cameraService;
+    
+    void* previewGraphicProducer;
+};
+
 extern RpcUtil RpcUtilInst;
+
+extern AudioRpcUtil AudioRpcUtilInst;
+
+extern CameraRpcUtil CameraRpcUtilInst;
 
 void readRpcConf(int* isServer, char* serverAddr, int* serverPort, int* sensorChannelPort);
 
 void initRpcEndpoint();
 
-struct RpcPairFds {
-    int sendFd;
-    
-    int receiveFd;
-    
-    RpcPairFds() : sendFd(-1), receiveFd(-1) {}
-};
+bool isNetworkReady();
 
-extern RpcPairFds sensorChannelFds;
+void initAudioRpcEndpoint();
+
+void initCameraRpcEndpoint();
 
 // ---------------------------------------------------------------------------
 }; // namespace android
