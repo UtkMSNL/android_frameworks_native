@@ -472,6 +472,34 @@ void initCameraRpcEndpoint() {
     ALOGE("rpc camera service conf isenabled: %d, isServer: %d, serverAddr: %s, port: %d", CameraRpcUtilInst.isShareEnabled, CameraRpcUtilInst.isServer, CameraRpcUtilInst.serverAddr, CameraRpcUtilInst.serverPort);
 }
 
+// TODO: make this app be more comprehensive to incorporate the configurations for all the services
+RpcUtilBase AppRpcUtilInst;
+
+static inline void getProcessName(char* buffer, int* size) {
+    std::ifstream cmdfile("/proc/self/cmdline", std::ifstream::binary);
+    cmdfile.read(buffer, *size);
+}
+
+void initAppConf()
+{
+    char filepath[128];
+    strcpy(filepath, "/data/data/");
+    char processname[64];
+    int size = 64;
+    getProcessName(processname, &size);
+    char* pname = processname;
+    if (strncmp(processname, "/system/bin/", strlen("/system/bin/")) == 0) {
+        pname += strlen("/system/bin/");
+    }
+    strcat(filepath, pname);
+    strcat(filepath, "/service.config.properties");
+    std::ifstream* confFile = readRpcConfBase(filepath, &AppRpcUtilInst);
+    if(confFile == NULL) {
+        return;
+    }
+    confFile->close();
+}
+
 // ---------------------------------------------------------------------------
 
 }; // namespace android

@@ -118,8 +118,6 @@ struct CameraRpcUtil : public RpcUtilBase {
     u4 CAMERA_PREVIEW_REFRESH_ID;
     
     void* cameraService;
-    
-    void* previewGraphicProducer;
 };
 
 extern RpcUtil RpcUtilInst;
@@ -127,6 +125,8 @@ extern RpcUtil RpcUtilInst;
 extern AudioRpcUtil AudioRpcUtilInst;
 
 extern CameraRpcUtil CameraRpcUtilInst;
+
+extern RpcUtilBase AppRpcUtilInst;
 
 void readRpcConf(int* isServer, char* serverAddr, int* serverPort, int* sensorChannelPort);
 
@@ -137,6 +137,8 @@ bool isNetworkReady();
 void initAudioRpcEndpoint();
 
 void initCameraRpcEndpoint();
+
+void initAppConf();
 
 // ---------------------------------------------------------------------------
 }; // namespace android
