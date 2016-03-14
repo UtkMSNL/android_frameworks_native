@@ -174,6 +174,8 @@ SurfaceFlinger::SurfaceFlinger()
 {
     ALOGI("SurfaceFlinger is starting");
 
+    SurfaceRpcUtil.surfaceFlinger = this;
+    
     // debugging stuff...
     char value[PROPERTY_VALUE_MAX];
 

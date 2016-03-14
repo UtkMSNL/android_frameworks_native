@@ -120,6 +120,22 @@ struct CameraRpcUtil : public RpcUtilBase {
     void* cameraService;
 };
 
+struct SurfaceRpcUtil : public RpcUtilBase
+{
+    u4 SURFACE_SERVICE_ID;
+    
+    void* surfaceFlinger;
+    
+    std::map<int, void*> idToLayers;
+    
+    std::map<void*, int> layerToIds;
+    
+    std::map<int, void*> idToClients;
+    
+    std::map<void*, int> clientToIds;
+
+};
+
 extern RpcUtil RpcUtilInst;
 
 extern AudioRpcUtil AudioRpcUtilInst;
@@ -127,6 +143,8 @@ extern AudioRpcUtil AudioRpcUtilInst;
 extern CameraRpcUtil CameraRpcUtilInst;
 
 extern RpcUtilBase AppRpcUtilInst;
+
+extern SurfaceRpcUtil SurfaceRpcUtilInst;
 
 void readRpcConf(int* isServer, char* serverAddr, int* serverPort, int* sensorChannelPort);
 
@@ -136,7 +154,9 @@ bool isNetworkReady();
 
 void initAudioRpcEndpoint();
 
-void initCameraRpcEndpoint();
+void initCameraRpcEndpoint
+
+void initSurfaceRpcEndpoint();
 
 void initAppConf();
 

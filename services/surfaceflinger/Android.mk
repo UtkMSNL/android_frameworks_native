@@ -19,6 +19,8 @@ LOCAL_SRC_FILES:= \
     SurfaceFlinger.cpp \
     SurfaceFlingerConsumer.cpp \
     Transform.cpp \
+    RpcSurfaceFlingerClient.cpp \
+    RpcSurfaceFlingerServer.cpp \
     DisplayHardware/FramebufferSurface.cpp \
     DisplayHardware/HWComposer.cpp \
     DisplayHardware/PowerHAL.cpp \
@@ -108,7 +110,9 @@ LOCAL_SHARED_LIBRARIES := \
 	libbinder \
 	libui \
 	libgui \
-	libpowermanager
+	libpowermanager \
+    libsrpc \
+	libstlport
 
 ifeq ($(TARGET_USES_QCOM_BSP), true)
     LOCAL_C_INCLUDES += $(call project-path-for,qcom-display)/libgralloc
@@ -122,6 +126,8 @@ ifeq ($(TARGET_HAVE_UI_BLUR),true)
     LOCAL_SHARED_LIBRARIES += libuiblur
     LOCAL_CFLAGS += -DUI_BLUR
 endif
+
+LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include
 
 LOCAL_MODULE:= libsurfaceflinger
 
@@ -144,7 +150,8 @@ LOCAL_SHARED_LIBRARIES := \
 	liblog \
 	libbinder \
 	libutils \
-	libdl
+	libdl \
+	libstlport
 
 LOCAL_WHOLE_STATIC_LIBRARIES := libsigchain
 
@@ -153,6 +160,8 @@ LOCAL_MODULE:= surfaceflinger
 ifdef TARGET_32_BIT_SURFACEFLINGER
 LOCAL_32_BIT_ONLY := true
 endif
+
+LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include
 
 include $(BUILD_EXECUTABLE)
 

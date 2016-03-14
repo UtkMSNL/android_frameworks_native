@@ -1,0 +1,14 @@
+#ifndef ANDROID_RPC_SURFACE_FLINGER_COMMON_H
+#define ANDROID_RPC_SURFACE_FLINGER_COMMON_H
+
+#define SF_METH_ADD_CLIENT 1
+#define SF_METH_REMOVE_CLIENT 2
+#define SF_METH_ADD_LAYER 3
+#define SF_METH_REMOVE_LAYER 4
+#define SF_METH_SYNC_LAYER 5
+
+namespace android {
+
+}; // namespace android
+
+#endif // ANDROID_RPC_SURFACE_FLINGER_COMMON_H

@@ -25,7 +25,29 @@
 #include <binder/IServiceManager.h>
 #include "SurfaceFlinger.h"
 
+#include <rpc/share_rpc.h>
+#include "RpcSurfaceFlingerServer.h"
+
 using namespace android;
+
+static void* initSurfaceRpc(void* args) {
+    while (!isNetworkReady()) {
+        ALOGE("rpc surface flinger the network is still not available");
+        sleep(1);
+    }
+    initSurfaceRpcEndpoint();
+    
+    // rpc server start to register the rpc functions it can serve
+    if (SurfaceRpcUtilInst.isShareEnabled && SurfaceRpcUtilInst.isServer) {
+        // get the service handle and register it to rpc module
+        sp<SurfaceFlinger>* gSurfaceFlinger = new sp<SurfaceFlinger>((SurfaceFlinger*) SurfaceRpcUtilInst.surfaceFlinger);
+        SurfaceRpcUtilInst.idToObjMap[SurfaceRpcUtilInst.SURFACE_SERVICE_ID] = gSurfaceFlinger;
+        // register server method
+        registerSurfaceFlingerServer();
+    }
+    
+    return NULL;
+} 
 
 int main(int, char**) {
     // When SF is launched in its own process, limit the number of
@@ -38,12 +60,17 @@ int main(int, char**) {
 
     // instantiate surfaceflinger
     sp<SurfaceFlinger> flinger = new SurfaceFlinger();
+    
+    SurfaceRpcUtilInst.surfaceFlinger = flinger->get();
 
 #if defined(HAVE_PTHREADS)
     setpriority(PRIO_PROCESS, 0, PRIORITY_URGENT_DISPLAY);
 #endif
     set_sched_policy(0, SP_FOREGROUND);
 
+    pthread_t rpcInitThread;
+    pthread_create(&rpcInitThread, NULL, initSurfaceRpc, NULL);
+    
     // initialize before clients can connect
     flinger->init();
 

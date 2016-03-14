@@ -432,12 +432,20 @@ void readAudioRpcConf() {
     confFile->close();
 }
 
+static bool netReady = false;
+
 bool isNetworkReady() {
+    if (netReady) {
+        return true;
+    } 
     // use the existence of a file to check if the network is ready
     std::ifstream netfile("/data/data/media_server/net_ready");
     bool result = netfile.good();
     netfile.close();
-    std::remove("/data/data/media_server/net_ready");
+    if (result) {
+        netReady = true;
+        std::remove("/data/data/media_server/net_ready");
+    }
     return result;
 }
 
@@ -498,6 +506,27 @@ void initAppConf()
         return;
     }
     confFile->close();
+}
+
+SurfaceRpcUtil SurfaceRpcUtilInst;
+
+void readSurfaceRpcConf()
+{
+    SurfaceRpcUtilInst.SURFACE_SERVICE_ID = 6;
+    // initialize the service id
+    std::ifstream* confFile = readRpcConfBase("/data/data/surface_flinger/surface.service.config.properties", &SurfaceRpcUtilInst);
+    if(confFile == NULL) {
+        return;
+    }
+    confFile->close();   
+}
+
+void initSurfaceRpcEndpoint()
+{    
+    readSurfaceRpcConf();
+    initRpcEndpointBase(&SurfaceRpcUtilInst);
+    
+    ALOGE("rpc camera service conf isenabled: %d, isServer: %d, serverAddr: %s, port: %d", SurfaceRpcUtilInst.isShareEnabled, SurfaceRpcUtilInst.isServer, SurfaceRpcUtilInst.serverAddr, SurfaceRpcUtilInst.serverPort);
 }
 
 // ---------------------------------------------------------------------------
