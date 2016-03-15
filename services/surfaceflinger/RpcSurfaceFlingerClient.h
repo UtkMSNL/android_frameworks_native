@@ -2,6 +2,13 @@
 #define ANDROID_RPC_SURFACE_FLINGER_CLIENT_H
 
 #include <ui/PixelFormat.h>
+#include <utils/String8.h>
+#include <utils/StrongPointer.h>
+#include <gui/BufferQueue.h>
+
+#include <pthread.h>
+#include <cstdlib>
+#include <queue>
 
 namespace android {
 
@@ -17,7 +24,7 @@ struct SurfaceRpcRequest
     ~SurfaceRpcRequest()
     {
         if (payload != NULL) {
-            delete payload;
+            delete [] reinterpret_cast <char*> (payload);
         }
     }
 };
@@ -27,7 +34,7 @@ struct ClientDef
     void* client;
     
     ClientDef(void* vClient)
-        client(vClient) {}
+        : client(vClient) {}
 };
 
 struct LayerDef
@@ -77,6 +84,8 @@ void addLayer(const String8& name, uint32_t w, uint32_t h, uint32_t flags, Pixel
 void removeLayer(void* layer);
 
 void syncLayer(sp<GraphicBuffer> buffer, void* client, void* layer);
+
+void initFlingerClient();
 
 }; // namespace android
 

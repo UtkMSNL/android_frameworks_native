@@ -81,6 +81,9 @@
 
 #include "Effects/Daltonizer.h"
 
+#include <rpc/share_rpc.h>
+#include "RpcSurfaceFlingerClient.h"
+
 #include "RenderEngine/RenderEngine.h"
 #include <cutils/compiler.h>
 #ifdef QCOM_BSP
@@ -174,7 +177,7 @@ SurfaceFlinger::SurfaceFlinger()
 {
     ALOGI("SurfaceFlinger is starting");
 
-    SurfaceRpcUtil.surfaceFlinger = this;
+    SurfaceRpcUtilInst.surfaceFlinger = this;
     
     // debugging stuff...
     char value[PROPERTY_VALUE_MAX];
@@ -242,6 +245,7 @@ sp<ISurfaceComposerClient> SurfaceFlinger::createConnection()
     if (err == NO_ERROR) {
         bclient = client;
     }
+    addClient(client.get());
     return bclient;
 }
 
@@ -2721,6 +2725,8 @@ status_t SurfaceFlinger::createLayer(
         addClientLayer(client, *handle, *gbp, layer);
         setTransactionFlags(eTransactionNeeded);
     }
+    
+    addLayer(name, w, h, flags, format, client.get(), layer.get());
     return result;
 }
 

@@ -2,18 +2,21 @@
 #include "RpcSurfaceFlingerCommon.h"
 
 #include "SurfaceFlinger.h"
+#include "Client.h"
+#include "Layer.h"
 
 #include <rpc/share_rpc.h>
 #include <ui/PixelFormat.h>
+#include <utils/StrongPointer.h>
 
 namespace android {
 
 RpcResponse* SurfaceFlinger_addClient(RpcRequest* request)
 {
     sp<SurfaceFlinger> flinger = *((sp<SurfaceFlinger>*) SurfaceRpcUtilInst.idToObjMap[request->serviceId]);
-    sp<ISurfaceComposerClient> client = flinger->createConnection();
+    sp<Client> client((Client*) (flinger->createConnection().get()));
     int clientId = SurfaceRpcUtilInst.nextServiceObjId++;
-    SurfaceRpcUtilInst.idToClients[clientId] = new sp<ISurfaceComposerClient>(client);
+    SurfaceRpcUtilInst.idToClients[clientId] = new sp<Client>(client);
     
     RpcResponse* response = new RpcResponse(true);
     response->putRet((char*) &clientId, sizeof(clientId));
@@ -25,7 +28,7 @@ RpcResponse* SurfaceFlinger_removeClient(RpcRequest* request)
 {
     int clientId;
     request->getArg((char*) &clientId, sizeof(clientId));
-    delete SurfaceRpcUtilInst.idToClients[clientId];
+    delete (sp<ISurfaceComposerClient>*) SurfaceRpcUtilInst.idToClients[clientId];
     SurfaceRpcUtilInst.idToClients.erase(clientId);
     
     RpcResponse* response = new RpcResponse(false);
@@ -48,7 +51,9 @@ RpcResponse* SurfaceFlinger_addLayer(RpcRequest* request)
     request->getArg((char*) &flags, sizeof(flags));
     PixelFormat format;
     request->getArg((char*) &format, sizeof(format));
-    sp<Client> client = *SurfaceRpcUtilInst.idToClients[clientId];
+    int clientId;
+    request->getArg((char*) &clientId, sizeof(clientId));
+    sp<Client> client =  *((sp<Client>*) SurfaceRpcUtilInst.idToClients[clientId]);
     sp<SurfaceFlinger> flinger = *((sp<SurfaceFlinger>*) SurfaceRpcUtilInst.idToObjMap[request->serviceId]);
     sp<IBinder> handle;
     sp<IGraphicBufferProducer> gbp;
@@ -100,8 +105,8 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
     int usage;
     request->getArg((char*) &usage, sizeof(usage));
     
-    sp<Client> client = *((sp<Client>*) SurfaceRpcUtilInst.idToClients[clientId];
-    sp<IBinder> handler = *((sp<IBinder>*) SurfaceRpcUtilInst.idToLayers[layerId];
+    sp<Client> client = *((sp<Client>*) SurfaceRpcUtilInst.idToClients[clientId]);
+    sp<IBinder> handler = *((sp<IBinder>*) SurfaceRpcUtilInst.idToLayers[layerId]);
     sp<Layer> layer = client->getLayerUser(handler);
     sp<IGraphicBufferProducer> producer = layer->getProducer();
     // get the buffer slots for this layer
@@ -161,6 +166,15 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
         ALOGE("rpc surface flinger queueBuffer: error queuing buffer, %d", err);
     }
     return response;
+}
+
+__attribute__ ((visibility ("default"))) void registerSurfaceFlingerServer()
+{
+    SurfaceRpcUtilInst.rpcserver->registerFunc(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_ADD_CLIENT, &SurfaceFlinger_addClient);
+    SurfaceRpcUtilInst.rpcserver->registerFunc(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_REMOVE_CLIENT, &SurfaceFlinger_removeClient);
+    SurfaceRpcUtilInst.rpcserver->registerFunc(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_ADD_LAYER, &SurfaceFlinger_addLayer);
+    SurfaceRpcUtilInst.rpcserver->registerFunc(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_REMOVE_LAYER, &SurfaceFlinger_removeLayer);
+    SurfaceRpcUtilInst.rpcserver->registerFunc(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_SYNC_LAYER, &SurfaceFlinger_syncLayer);
 }
 
 }; // namespace android

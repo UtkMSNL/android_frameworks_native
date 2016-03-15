@@ -144,6 +144,11 @@ public:
     static bool sExtendedMode;
     static bool isExtendedMode() { return sExtendedMode; };
 #endif
+    virtual sp<ISurfaceComposerClient> createConnection();
+    
+    status_t createLayer(const String8& name, const sp<Client>& client,
+            uint32_t w, uint32_t h, PixelFormat format, uint32_t flags,
+            sp<IBinder>* handle, sp<IGraphicBufferProducer>* gbp);
 private:
     friend class Client;
     friend class DisplayEventConnection;
@@ -201,7 +206,6 @@ private:
     /* ------------------------------------------------------------------------
      * ISurfaceComposer interface
      */
-    virtual sp<ISurfaceComposerClient> createConnection();
     virtual sp<IGraphicBufferAlloc> createGraphicBufferAlloc();
     virtual sp<IBinder> createDisplay(const String8& displayName, bool secure);
     virtual void destroyDisplay(const sp<IBinder>& display);
@@ -311,9 +315,6 @@ private:
     /* ------------------------------------------------------------------------
      * Layer management
      */
-    status_t createLayer(const String8& name, const sp<Client>& client,
-            uint32_t w, uint32_t h, PixelFormat format, uint32_t flags,
-            sp<IBinder>* handle, sp<IGraphicBufferProducer>* gbp);
 
     status_t createNormalLayer(const sp<Client>& client, const String8& name,
             uint32_t w, uint32_t h, uint32_t flags, PixelFormat& format,

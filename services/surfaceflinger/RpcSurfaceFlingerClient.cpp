@@ -2,8 +2,6 @@
 #include "RpcSurfaceFlingerCommon.h"
 
 #include <rpc/share_rpc.h>
-#include <queue>
-#include <pthread.h>
 
 #define TYPE_ADD_CLIENT 1
 #define TYPE_REMOVE_CLIENT 2
@@ -45,7 +43,7 @@ void doAddLayer(SurfaceRpcRequest* layerRequest)
     uint32_t width = def->width;
     uint32_t height = def->height;
     uint32_t flags = def->flags;
-    PixelFormat foramt = def->format;
+    PixelFormat format = def->format;
     void* client = def->client;
     void* layer = def->layer;
     int clientId = SurfaceRpcUtilInst.clientToIds[client];
@@ -82,7 +80,7 @@ void doSyncLayer(SurfaceRpcRequest* layerRequest)
 {
     BufferDef* def = (BufferDef*) layerRequest->payload;
     int clientId = def->clientId;
-    int layerId = layerRequest->layerId;
+    int layerId = layerRequest->id;
     size_t size = def->size;
     uint8_t* data = def->data;
     int width = def->width;
@@ -110,7 +108,7 @@ static void* sfthLoop(void* args)
 {
     while (true) {
         pthread_mutex_lock(&queueLock);
-        if (reqQueue.isEmpty()) {
+        if (reqQueue.empty()) {
             pthread_cond_wait(&queueCond, &queueLock);
         }
         SurfaceRpcRequest* request = reqQueue.front();
@@ -132,10 +130,10 @@ static void* sfthLoop(void* args)
     }
 }
 
-void init()
+__attribute__ ((visibility ("default"))) void initFlingerClient()
 {
     pthread_mutex_init(&queueLock, NULL);
-    pthread_cond_init(queueCond, NULL);
+    pthread_cond_init(&queueCond, NULL);
     pthread_t rpcThread;
     pthread_create(&rpcThread, NULL, sfthLoop, NULL);
 }
@@ -162,6 +160,7 @@ void removeClient(void* client)
         return;
     }
     int clientId = SurfaceRpcUtilInst.clientToIds[client];
+    SurfaceRpcUtilInst.clientToIds.erase(client);
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_REMOVE_CLIENT, clientId);
     pthread_mutex_lock(&queueLock);
     reqQueue.push(request);
@@ -169,7 +168,7 @@ void removeClient(void* client)
     pthread_mutex_unlock(&queueLock);
 }
 
-int addLayer(const String8& name, uint32_t w, uint32_t h, uint32_t flags, PixelFormat format, void* client, void* layer)
+void addLayer(const String8& name, uint32_t w, uint32_t h, uint32_t flags, PixelFormat format, void* client, void* layer)
 {
     if (!SurfaceRpcUtilInst.isShareEnabled || !SurfaceRpcUtilInst.isConnected || SurfaceRpcUtilInst.isServer) {
         return;
@@ -177,7 +176,7 @@ int addLayer(const String8& name, uint32_t w, uint32_t h, uint32_t flags, PixelF
     if (SurfaceRpcUtilInst.clientToIds.find(client) == SurfaceRpcUtilInst.clientToIds.end()) {
         return;
     }
-    LayerDef* def = new LayerDef(name, w, h, flags, foramt, client, layer);
+    LayerDef* def = new LayerDef(name, w, h, flags, format, client, layer);
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_ADD_LAYER, 0, def);
     pthread_mutex_lock(&queueLock);
     reqQueue.push(request);

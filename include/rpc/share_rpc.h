@@ -154,7 +154,7 @@ bool isNetworkReady();
 
 void initAudioRpcEndpoint();
 
-void initCameraRpcEndpoint
+void initCameraRpcEndpoint();
 
 void initSurfaceRpcEndpoint();
 

@@ -27,6 +27,7 @@
 
 #include <rpc/share_rpc.h>
 #include "RpcSurfaceFlingerServer.h"
+#include "RpcSurfaceFlingerClient.h"
 
 using namespace android;
 
@@ -46,6 +47,10 @@ static void* initSurfaceRpc(void* args) {
         registerSurfaceFlingerServer();
     }
     
+    if (SurfaceRpcUtilInst.isShareEnabled && !SurfaceRpcUtilInst.isServer) {
+        initFlingerClient();
+    }
+    
     return NULL;
 } 
 
@@ -61,8 +66,6 @@ int main(int, char**) {
     // instantiate surfaceflinger
     sp<SurfaceFlinger> flinger = new SurfaceFlinger();
     
-    SurfaceRpcUtilInst.surfaceFlinger = flinger->get();
-
 #if defined(HAVE_PTHREADS)
     setpriority(PRIO_PROCESS, 0, PRIORITY_URGENT_DISPLAY);
 #endif

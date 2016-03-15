@@ -46,6 +46,8 @@
 
 #include "DisplayHardware/HWComposer.h"
 
+#include "RpcSurfaceFlingerClient.h"
+
 #include "RenderEngine/RenderEngine.h"
 #ifdef QCOM_BSP
 #include <gralloc_priv.h>
@@ -178,6 +180,8 @@ void Layer::onFirstRef() {
 }
 
 Layer::~Layer() {
+    ALOGE("rpc surface flinger destruct layer is: %p", this);
+    removeLayer(this);
     sp<Client> c(mClientRef.promote());
     if (c != 0) {
         c->detachLayer(this);
@@ -204,7 +208,6 @@ void Layer::onFrameAvailable(const BufferItem& item) {
         Mutex::Autolock lock(mQueueItemLock);
         mQueueItems.push_back(item);
     }
-
     android_atomic_inc(&mQueuedFrames);
     mFlinger->signalLayerUpdate();
 }
@@ -1451,6 +1454,11 @@ Region Layer::latchBuffer(bool& recomputeVisibleRegions)
         if (mActiveBuffer == NULL) {
             // this can only happen if the very first buffer was rejected.
             return outDirtyRegion;
+        }
+        
+        sp<Client> client(mClientRef.promote());
+        if (client != NULL) {
+            syncLayer(mActiveBuffer, client.get(), this);
         }
 
         mRefreshPending = true;

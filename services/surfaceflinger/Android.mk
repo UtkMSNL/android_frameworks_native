@@ -151,6 +151,7 @@ LOCAL_SHARED_LIBRARIES := \
 	libbinder \
 	libutils \
 	libdl \
+    libsrpc \
 	libstlport
 
 LOCAL_WHOLE_STATIC_LIBRARIES := libsigchain

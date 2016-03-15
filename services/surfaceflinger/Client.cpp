@@ -25,6 +25,7 @@
 #include "Client.h"
 #include "Layer.h"
 #include "SurfaceFlinger.h"
+#include "RpcSurfaceFlingerClient.h"
 
 namespace android {
 
@@ -41,6 +42,7 @@ Client::Client(const sp<SurfaceFlinger>& flinger)
 
 Client::~Client()
 {
+    removeClient(this);
     const size_t count = mLayers.size();
     for (size_t i=0 ; i<count ; i++) {
         sp<Layer> layer(mLayers.valueAt(i).promote());
@@ -48,6 +50,7 @@ Client::~Client()
             mFlinger->removeLayer(layer);
         }
     }
+    ALOGE("rpc surface flinger a client is destructed");
 }
 
 status_t Client::initCheck() const {
