@@ -71,10 +71,6 @@ struct BufferDef
     }
 };
 
-std::queue<SurfaceRpcRequest*> reqQueue;
-pthread_mutex_t queueLock;
-pthread_cond_t queueCond;
-
 void addClient(void* client);
 
 void removeClient(void* client);

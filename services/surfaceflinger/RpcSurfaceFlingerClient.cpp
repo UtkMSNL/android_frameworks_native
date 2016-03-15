@@ -11,6 +11,10 @@
 
 namespace android {
 
+static std::queue<SurfaceRpcRequest*> reqQueue;
+static pthread_mutex_t queueLock;
+static pthread_cond_t queueCond;
+
 void doAddClient(SurfaceRpcRequest* clientRequest)
 {
     ClientDef* def = (ClientDef*) clientRequest->payload;
