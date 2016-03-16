@@ -8,6 +8,8 @@
 #include <rpc/share_rpc.h>
 #include <ui/PixelFormat.h>
 #include <utils/StrongPointer.h>
+#include <utils/Log.h>
+#include <private/gui/LayerState.h>
 
 namespace android {
 
@@ -20,6 +22,7 @@ RpcResponse* SurfaceFlinger_addClient(RpcRequest* request)
     
     RpcResponse* response = new RpcResponse(true);
     response->putRet((char*) &clientId, sizeof(clientId));
+    ALOGI("rpc surface flinger add a client server");
     
     return response;
 }
@@ -31,11 +34,12 @@ RpcResponse* SurfaceFlinger_removeClient(RpcRequest* request)
     delete (sp<ISurfaceComposerClient>*) SurfaceRpcUtilInst.idToClients[clientId];
     SurfaceRpcUtilInst.idToClients.erase(clientId);
     
+    ALOGI("rpc surface flinger remove a client server");
     RpcResponse* response = new RpcResponse(false);
     return response; 
 }
 
-
+sp<Layer> remoteLayer;
 RpcResponse* SurfaceFlinger_addLayer(RpcRequest* request)
 {
     size_t len;
@@ -53,7 +57,7 @@ RpcResponse* SurfaceFlinger_addLayer(RpcRequest* request)
     request->getArg((char*) &format, sizeof(format));
     int clientId;
     request->getArg((char*) &clientId, sizeof(clientId));
-    sp<Client> client =  *((sp<Client>*) SurfaceRpcUtilInst.idToClients[clientId]);
+    sp<Client> client = *((sp<Client>*) SurfaceRpcUtilInst.idToClients[clientId]);
     sp<SurfaceFlinger> flinger = *((sp<SurfaceFlinger>*) SurfaceRpcUtilInst.idToObjMap[request->serviceId]);
     sp<IBinder> handle;
     sp<IGraphicBufferProducer> gbp;
@@ -63,6 +67,12 @@ RpcResponse* SurfaceFlinger_addLayer(RpcRequest* request)
     // initialize the buffer slots for this layer
     bufferSlots[layerId] = new sp<GraphicBuffer>[BufferQueue::NUM_BUFFER_SLOTS];
     
+    // set layer z
+    sp<Layer> layer = client->getLayerUser(handle);
+    //((sp<ISurfaceComposerClient>) client)->setLayer(handle, 0xffffffff);
+    remoteLayer = layer;
+    
+    ALOGI("rpc surface flinger add a layer server, ptr[%p]", layer.get());
     RpcResponse* response = new RpcResponse(true);
     response->putRet((char*) &layerId, sizeof(layerId));
     
@@ -77,9 +87,10 @@ RpcResponse* SurfaceFlinger_removeLayer(RpcRequest* request)
     delete bufferSlots[layerId];
     bufferSlots.erase(layerId);
     // delte layer object
-    delete SurfaceRpcUtilInst.idToLayers[layerId];
+    delete (sp<IBinder>*) SurfaceRpcUtilInst.idToLayers[layerId];
     SurfaceRpcUtilInst.idToLayers.erase(layerId);
     
+    ALOGI("rpc surface flinger remove a layer server");
     RpcResponse* response = new RpcResponse(false);
     return response; 
 }
@@ -147,7 +158,7 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
     ALOGE_IF(err, "error locking dst buffer %s", strerror(-err));
     if (dst_bits) {
         memcpy(dst_bits, data, size);
-        ALOGE("rpc surface flinger copied data: width[%d], height[%d], stride[%d], format[%d], usage[%d]", width, height, stride, format, usage);
+        ALOGE("rpc surface flinger copied data: width[%d], height[%d], stride[%d], format[%d], usage[%d], size[%d]", width, height, stride, format, usage, size);
         dst->unlock();
     }
     // queue the producer buffer
@@ -165,7 +176,48 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
     if (err != OK)  {
         ALOGE("rpc surface flinger queueBuffer: error queuing buffer, %d", err);
     }
+    ALOGI("rpc surface flinger sync a layer server");
     return response;
+}
+
+RpcResponse* SurfaceFlinger_updateLayerState(RpcRequest* request)
+{
+    int clientId;
+    request->getArg((char*) &clientId, sizeof(clientId));
+    int layerId;
+    request->getArg((char*) &layerId, sizeof(layerId));
+    layer_state_t state;
+    request->getArg((char*) &state.what, sizeof(state.what));
+    request->getArg((char*) &state.x, sizeof(state.x));
+    request->getArg((char*) &state.y, sizeof(state.y));
+    request->getArg((char*) &state.z, sizeof(state.z));
+    request->getArg((char*) &state.w, sizeof(state.w));
+    request->getArg((char*) &state.h, sizeof(state.h));
+    request->getArg((char*) &state.layerStack, sizeof(state.layerStack));
+    request->getArg((char*) &state.blur, sizeof(state.blur));
+    request->getArg((char*) &state.blurMaskSampling, sizeof(state.blurMaskSampling));
+    request->getArg((char*) &state.blurMaskAlphaThreshold, sizeof(state.blurMaskAlphaThreshold));
+    request->getArg((char*) &state.alpha, sizeof(state.alpha));
+    request->getArg((char*) &state.flags, sizeof(state.flags));
+    request->getArg((char*) &state.mask, sizeof(state.mask));
+    request->getArg((char*) &state.matrix, sizeof(state.matrix));
+    request->getArg((char*) &state.crop, sizeof(state.crop));
+    
+    sp<Client> client = *((sp<Client>*) SurfaceRpcUtilInst.idToClients[clientId]);
+    sp<IBinder> handler = *((sp<IBinder>*) SurfaceRpcUtilInst.idToLayers[layerId]);
+    sp<SurfaceFlinger> flinger = *((sp<SurfaceFlinger>*) SurfaceRpcUtilInst.idToObjMap[request->serviceId]);
+    state.surface = handler;
+    Vector<ComposerState> cstates;
+    Vector<DisplayState> display;
+    ComposerState cstate;
+    cstate.client = client;
+    cstate.state = state;
+    cstates.add(cstate);
+    flinger->setTransactionState(cstates, display, 0);
+
+    ALOGI("rpc surface flinger update layer state server");
+    RpcResponse* response = new RpcResponse(false);
+    return response; 
 }
 
 __attribute__ ((visibility ("default"))) void registerSurfaceFlingerServer()
@@ -175,6 +227,7 @@ __attribute__ ((visibility ("default"))) void registerSurfaceFlingerServer()
     SurfaceRpcUtilInst.rpcserver->registerFunc(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_ADD_LAYER, &SurfaceFlinger_addLayer);
     SurfaceRpcUtilInst.rpcserver->registerFunc(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_REMOVE_LAYER, &SurfaceFlinger_removeLayer);
     SurfaceRpcUtilInst.rpcserver->registerFunc(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_SYNC_LAYER, &SurfaceFlinger_syncLayer);
+    SurfaceRpcUtilInst.rpcserver->registerFunc(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_UPDATE_LAYER_STATE, &SurfaceFlinger_updateLayerState);
 }
 
 }; // namespace android

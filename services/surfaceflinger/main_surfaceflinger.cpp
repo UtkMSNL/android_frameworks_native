@@ -32,7 +32,7 @@
 using namespace android;
 
 static void* initSurfaceRpc(void* args) {
-    while (!isNetworkReady()) {
+    while (!isNetworkReady("/data/data/surface_flinger/net_ready")) {
         ALOGE("rpc surface flinger the network is still not available");
         sleep(1);
     }

@@ -180,7 +180,6 @@ void Layer::onFirstRef() {
 }
 
 Layer::~Layer() {
-    ALOGE("rpc surface flinger destruct layer is: %p", this);
     removeLayer(this);
     sp<Client> c(mClientRef.promote());
     if (c != 0) {

@@ -6,6 +6,7 @@
 #define SF_METH_ADD_LAYER 3
 #define SF_METH_REMOVE_LAYER 4
 #define SF_METH_SYNC_LAYER 5
+#define SF_METH_UPDATE_LAYER_STATE 6
 
 namespace android {
 

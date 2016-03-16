@@ -37,7 +37,7 @@ namespace android {
 #define MAX_CONTROL_VPACKET_SIZE (1<<16)
 
 // TODO: Move compression only into tcpmux layer.
-//#define USE_COMPRESSION
+#define USE_COMPRESSION
 
 #ifdef USE_COMPRESSION
 #include "zlib.h"

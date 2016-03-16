@@ -149,6 +149,9 @@ public:
     status_t createLayer(const String8& name, const sp<Client>& client,
             uint32_t w, uint32_t h, PixelFormat format, uint32_t flags,
             sp<IBinder>* handle, sp<IGraphicBufferProducer>* gbp);
+            
+    virtual void setTransactionState(const Vector<ComposerState>& state,
+            const Vector<DisplayState>& displays, uint32_t flags);
 private:
     friend class Client;
     friend class DisplayEventConnection;
@@ -210,8 +213,6 @@ private:
     virtual sp<IBinder> createDisplay(const String8& displayName, bool secure);
     virtual void destroyDisplay(const sp<IBinder>& display);
     virtual sp<IBinder> getBuiltInDisplay(int32_t id);
-    virtual void setTransactionState(const Vector<ComposerState>& state,
-            const Vector<DisplayState>& displays, uint32_t flags);
     virtual void bootFinished();
     virtual bool authenticateSurfaceTexture(
         const sp<IGraphicBufferProducer>& bufferProducer) const;

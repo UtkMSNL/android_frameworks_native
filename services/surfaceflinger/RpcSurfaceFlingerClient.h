@@ -5,6 +5,7 @@
 #include <utils/String8.h>
 #include <utils/StrongPointer.h>
 #include <gui/BufferQueue.h>
+#include <private/gui/LayerState.h>
 
 #include <pthread.h>
 #include <cstdlib>
@@ -29,7 +30,7 @@ struct SurfaceRpcRequest
     }
 };
 
-struct ClientDef
+/*struct ClientDef
 {
     void* client;
     
@@ -49,7 +50,7 @@ struct LayerDef
     
     LayerDef(String8 vName, uint32_t vWidth, uint32_t vHeight, uint32_t vFlags, PixelFormat vFormat, void* vClient, void* vLayer)
         : name(vName), width(vWidth), height(vHeight), flags(vFlags), format(vFormat), client(vClient), layer(vLayer) {}
-};
+};*/
 
 struct BufferDef
 {
@@ -71,6 +72,31 @@ struct BufferDef
     }
 };
 
+// the fields commented out are not supported by now
+struct LayerStateDef
+{
+    int clientId;
+    //sp<IBinder>     surface;
+    uint32_t        what;
+    float           x;
+    float           y;
+    uint32_t        z;
+    uint32_t        w;
+    uint32_t        h;
+    uint32_t        layerStack;
+    float           blur;
+    //sp<IBinder>     blurMaskSurface;
+    int32_t         blurMaskSampling;
+    float           blurMaskAlphaThreshold;
+    float           alpha;
+    uint8_t         flags;
+    uint8_t         mask;
+    //uint8_t         reserved;
+    layer_state_t::matrix22_t      matrix;
+    Rect            crop;
+    //Region          transparentRegion;
+};
+
 void addClient(void* client);
 
 void removeClient(void* client);
@@ -80,6 +106,8 @@ void addLayer(const String8& name, uint32_t w, uint32_t h, uint32_t flags, Pixel
 void removeLayer(void* layer);
 
 void syncLayer(sp<GraphicBuffer> buffer, void* client, void* layer);
+
+void updateLayerState(void* client, void* layer, layer_state_t state);
 
 void initFlingerClient();
 

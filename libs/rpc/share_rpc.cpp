@@ -114,21 +114,24 @@ void RpcEndpoint::registerFunc(u4 serviceId, u4 methodId, RpcCallFunc callFunc) 
 static int connectServer(RpcClient* client, struct sockaddr* addr) {
     int s = socket(AF_INET, SOCK_STREAM, 0);
     if(s == -1) {
+        ALOGE("rpc service module open socket failed, %s", strerror(errno));
         return -1;
     }
     if(connect(s, addr, sizeof(struct sockaddr))) {
         if(s != -1) {
-            ALOGE("rpc audio service connection is failed, %s", strerror(errno));
+            ALOGE("rpc service module connection is failed, %s", strerror(errno));
             close(s);
             return -1;
         }
     }
     u1 magic_value = 0x55;
     if(1 != write(s, &magic_value, 1)) {
+        ALOGE("rpc service module client write magic data is failed, %s", strerror(errno));
         close(s);
         return -1;
     }
     if(1 != read(s, &magic_value, 1)) {
+        ALOGE("rpc service module client read magic data is failed, %s", strerror(errno));
         close(s);
         return -1;
     }
@@ -138,7 +141,7 @@ static int connectServer(RpcClient* client, struct sockaddr* addr) {
         return -1;
     }
     if(magic_value != 0x55) {
-        perror("Bad magic value from server");
+        ALOGE("rpc service module Bad magic value from server, %s", strerror(errno));
         close(s);
         return -1;
     }
@@ -184,7 +187,7 @@ static void* bindServer(void* args) {
     for(iter = 0; ; iter = iter < 7 ? iter + 1 : 7) {
         s = socket(AF_INET, SOCK_STREAM, 0);
         if(s == -1) {
-            perror("socket creation failed");
+            ALOGE("rpc service module binder server open socket failed, %s", strerror(errno));
             return NULL;
         }
         int one = 1;
@@ -194,11 +197,11 @@ static void* bindServer(void* args) {
         addr.addrin.sin_addr.s_addr = htonl(INADDR_ANY);
         addr.addrin.sin_port = htons(port);
         if(bind(s, &addr.addr, sizeof(addr.addrin)) < 0) {
-            perror("bind server address failed");
+            ALOGE("rpc service module bind server address failed, %s", strerror(errno));
             return NULL;
         }
         if(listen(s, 5) < 0) {
-            perror("listen to port failed");
+            ALOGE("rpc service module listen to port failed", strerror(errno));
             return NULL;
         }
         //ALOGI("Ready to accept connections on %d", addr.addrin.sin_port);
@@ -210,10 +213,11 @@ static void* bindServer(void* args) {
             socklen_t cli_len = sizeof(cli_addr.addrin);
             int s_cli = accept(s, &cli_addr.addr, &cli_len);
             if(s_cli == -1) {
-                perror("accept socket connection failed");
+                ALOGE("rpc service module accept socket connection failed, %s", strerror(errno));
             } else {
                 u1 magic_value = 0x55;
                 if (1 != write(s_cli, &magic_value, 1)) {
+                    ALOGE("rpc service module server connection write magic data failed", strerror(errno));
                     close(s_cli);
                     continue;
                 }
@@ -222,11 +226,12 @@ static void* bindServer(void* args) {
                     continue;
                 }
                 if (1 != read(s_cli, &magic_value, 1)) {
+                    ALOGE("rpc service module server connection read magic data failed", strerror(errno));
                     close(s_cli);
                     continue;
                 }
                 if (magic_value != 0x55) {
-                    perror("Bad magic value from server");
+                    ALOGE("rpc service module Bad magic value from server", strerror(errno));
                     close(s_cli);
                     continue;
                 }
@@ -377,6 +382,7 @@ void initRpcEndpointBase(RpcUtilBase* rpcUtilBaseInst) {
     if(rpcUtilBaseInst->isServer) {
         RpcServer* server = new RpcServer();
         server->startServer(rpcUtilBaseInst->serverPort);
+        ALOGI("rpc service module server is started");
         rpcUtilBaseInst->rpcserver = server;
         rpcUtilBaseInst->isConnected = 0;
         //pthread_t rttseverThread;
@@ -391,6 +397,7 @@ void initRpcEndpointBase(RpcUtilBase* rpcUtilBaseInst) {
         addr.addrin.sin_port = htons(rpcUtilBaseInst->serverPort);
         inet_aton(rpcUtilBaseInst->serverAddr, &addr.addrin.sin_addr);
         client->startClient(&addr.addr);
+        ALOGI("rpc service module client is started");
         rpcUtilBaseInst->rpcclient = client;
         rpcUtilBaseInst->isConnected = 1;
         //pthread_t rttclientThread;
@@ -432,19 +439,14 @@ void readAudioRpcConf() {
     confFile->close();
 }
 
-static bool netReady = false;
 
-bool isNetworkReady() {
-    if (netReady) {
-        return true;
-    } 
+bool isNetworkReady(char* fileName) {
     // use the existence of a file to check if the network is ready
-    std::ifstream netfile("/data/data/media_server/net_ready");
+    std::ifstream netfile(fileName);
     bool result = netfile.good();
     netfile.close();
     if (result) {
-        netReady = true;
-        std::remove("/data/data/media_server/net_ready");
+        std::remove(fileName);
     }
     return result;
 }
@@ -526,7 +528,7 @@ void initSurfaceRpcEndpoint()
     readSurfaceRpcConf();
     initRpcEndpointBase(&SurfaceRpcUtilInst);
     
-    ALOGE("rpc camera service conf isenabled: %d, isServer: %d, serverAddr: %s, port: %d", SurfaceRpcUtilInst.isShareEnabled, SurfaceRpcUtilInst.isServer, SurfaceRpcUtilInst.serverAddr, SurfaceRpcUtilInst.serverPort);
+    ALOGE("rpc surface service conf isenabled: %d, isServer: %d, serverAddr: %s, port: %d", SurfaceRpcUtilInst.isShareEnabled, SurfaceRpcUtilInst.isServer, SurfaceRpcUtilInst.serverAddr, SurfaceRpcUtilInst.serverPort);
 }
 
 // ---------------------------------------------------------------------------

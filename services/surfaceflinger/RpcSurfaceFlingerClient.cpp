@@ -2,12 +2,16 @@
 #include "RpcSurfaceFlingerCommon.h"
 
 #include <rpc/share_rpc.h>
+#include <utils/Log.h>
 
-#define TYPE_ADD_CLIENT 1
+#include "Layer.h"
+
+//#define TYPE_ADD_CLIENT 1
 #define TYPE_REMOVE_CLIENT 2
-#define TYPE_ADD_LAYER 3
+//#define TYPE_ADD_LAYER 3
 #define TYPE_REMOVE_LAYER 4
 #define TYPE_SYNC_LAYER 5
+#define TYPE_UPDATE_LAYER_STATE 6
 
 namespace android {
 
@@ -15,8 +19,9 @@ static std::queue<SurfaceRpcRequest*> reqQueue;
 static pthread_mutex_t queueLock;
 static pthread_cond_t queueCond;
 
-void doAddClient(SurfaceRpcRequest* clientRequest)
+/*void doAddClient(SurfaceRpcRequest* clientRequest)
 {
+    ALOGE("rpc surface flinger doAddClient start");
     ClientDef* def = (ClientDef*) clientRequest->payload;
     void* client = def->client;
     
@@ -27,7 +32,8 @@ void doAddClient(SurfaceRpcRequest* clientRequest)
     response->getRet((char*) &clientId, sizeof(clientId));
     delete response;
     SurfaceRpcUtilInst.clientToIds[client] = clientId;
-}
+    ALOGE("rpc surface flinger doAddClient finish");
+}*/
 
 void doRemoveClient(SurfaceRpcRequest* clientRequest)
 {
@@ -38,18 +44,23 @@ void doRemoveClient(SurfaceRpcRequest* clientRequest)
     
     RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
     delete response; 
+    ALOGI("rpc surface flinger remove a client");
 }
 
-void doAddLayer(SurfaceRpcRequest* layerRequest)
+/*void doAddLayer(SurfaceRpcRequest* layerRequest)
 {
+    ALOGE("rpc surface flinger doAddLayer start");
     LayerDef* def = (LayerDef*) layerRequest->payload;
+    void* client = def->client;
+    void* layer = def->layer;
+    if (SurfaceRpcUtilInst.clientToIds.find(client) == SurfaceRpcUtilInst.clientToIds.end()) {
+        return;
+    }
     String8 name = def->name;
     uint32_t width = def->width;
     uint32_t height = def->height;
     uint32_t flags = def->flags;
     PixelFormat format = def->format;
-    void* client = def->client;
-    void* layer = def->layer;
     int clientId = SurfaceRpcUtilInst.clientToIds[client];
     
     RpcRequest* request = new RpcRequest(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_ADD_LAYER, SurfaceRpcUtilInst.rpcclient->socketFd, true);
@@ -67,7 +78,8 @@ void doAddLayer(SurfaceRpcRequest* layerRequest)
     response->getRet((char*) &layerId, sizeof(layerId));
     delete response;
     SurfaceRpcUtilInst.layerToIds[layer] = layerId;
-}
+    ALOGE("rpc surface flinger doAddLayer finish");
+}*/
 
 void doRemoveLayer(SurfaceRpcRequest* layerRequest)
 {
@@ -78,6 +90,7 @@ void doRemoveLayer(SurfaceRpcRequest* layerRequest)
     
     RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
     delete response; 
+    ALOGI("rpc surface flinger remove a layer");
 }
 
 void doSyncLayer(SurfaceRpcRequest* layerRequest)
@@ -106,6 +119,60 @@ void doSyncLayer(SurfaceRpcRequest* layerRequest)
     
     RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
     delete response; 
+    ALOGI("rpc surface flinger sync a layer");
+}
+
+void doUpdateLayerState(SurfaceRpcRequest* layerRequest)
+{
+    LayerStateDef* def = (LayerStateDef*) layerRequest->payload;
+    int clientId = def->clientId;
+    int layerId = layerRequest->id;
+    //sp<IBinder> surface = def->surface;
+    uint32_t what = def->what;
+    float x = def->x;
+    float y = def->y;
+    uint32_t z = def->z;
+    uint32_t w = def->w;
+    uint32_t h = def->h;
+    uint32_t layerStack = def->layerStack;
+    float blur = def->blur;
+    //sp<IBinder> blurMaskSurface = def->blurMaskSurface;
+    what = what & ~layer_state_t::eBlurMaskSurfaceChanged;
+    int32_t blurMaskSampling = def->blurMaskSampling;
+    float blurMaskAlphaThreshold = def->blurMaskAlphaThreshold;
+    float alpha = def->alpha;
+    uint8_t flags = def->flags;
+    uint8_t mask = def->mask;
+    //uint8_t reserved = def->reserved;
+    layer_state_t::matrix22_t matrix = def->matrix;
+    //what = what & ~layer_state_t::eMatrixChanged;
+    Rect crop = def->crop;
+    //what = what & ~layer_state_t::eCropChanged;
+    //Region transparentRegion = def->transparentRegion;
+    what = what & ~layer_state_t::eTransparentRegionChanged;
+    
+    RpcRequest* request = new RpcRequest(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_UPDATE_LAYER_STATE, SurfaceRpcUtilInst.rpcclient->socketFd, true);
+    request->putArg((char*) &clientId, sizeof(clientId));
+    request->putArg((char*) &layerId, sizeof(layerId));
+    request->putArg((char*) &what, sizeof(what));
+    request->putArg((char*) &x, sizeof(x));
+    request->putArg((char*) &y, sizeof(y));
+    request->putArg((char*) &z, sizeof(z));
+    request->putArg((char*) &w, sizeof(w));
+    request->putArg((char*) &h, sizeof(h));
+    request->putArg((char*) &layerStack, sizeof(layerStack));
+    request->putArg((char*) &blur, sizeof(blur));
+    request->putArg((char*) &blurMaskSampling, sizeof(blurMaskSampling));
+    request->putArg((char*) &blurMaskAlphaThreshold, sizeof(blurMaskAlphaThreshold));
+    request->putArg((char*) &alpha, sizeof(alpha));
+    request->putArg((char*) &flags, sizeof(flags));
+    request->putArg((char*) &mask, sizeof(mask));
+    request->putArg((char*) &matrix, sizeof(matrix));
+    request->putArg((char*) &crop, sizeof(crop));
+    
+    RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
+    delete response; 
+    ALOGI("rpc surface flinger update layer state");
 }
 
 static void* sfthLoop(void* args)
@@ -119,15 +186,17 @@ static void* sfthLoop(void* args)
         reqQueue.pop();
         pthread_mutex_unlock(&queueLock);
         switch (request->type) {
-            case TYPE_ADD_CLIENT: doAddClient(request);
-                            break;
+//            case TYPE_ADD_CLIENT: doAddClient(request);
+//                            break;
             case TYPE_REMOVE_CLIENT: doRemoveClient(request);
                             break;
-            case TYPE_ADD_LAYER: doAddLayer(request);
-                            break;
+//            case TYPE_ADD_LAYER: doAddLayer(request);
+//                            break;
             case TYPE_REMOVE_LAYER: doRemoveLayer(request);
                             break;
             case TYPE_SYNC_LAYER: doSyncLayer(request);
+                            break;
+            case TYPE_UPDATE_LAYER_STATE: doUpdateLayerState(request);
                             break;
         }
         delete request;
@@ -147,12 +216,14 @@ void addClient(void* client)
     if (!SurfaceRpcUtilInst.isShareEnabled || !SurfaceRpcUtilInst.isConnected || SurfaceRpcUtilInst.isServer) {
         return;
     }
-    ClientDef* def = new ClientDef(client);
-    SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_ADD_CLIENT, 0, def);
-    pthread_mutex_lock(&queueLock);
-    reqQueue.push(request);
-    pthread_cond_signal(&queueCond);
-    pthread_mutex_unlock(&queueLock);
+    RpcRequest* request = new RpcRequest(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_ADD_CLIENT, SurfaceRpcUtilInst.rpcclient->socketFd, false);
+    
+    RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
+    int clientId;
+    response->getRet((char*) &clientId, sizeof(clientId));
+    delete response;
+    SurfaceRpcUtilInst.clientToIds[client] = clientId;
+    ALOGI("rpc surface flinger add a client");
 }
 
 void removeClient(void* client)
@@ -172,7 +243,7 @@ void removeClient(void* client)
     pthread_mutex_unlock(&queueLock);
 }
 
-void addLayer(const String8& name, uint32_t w, uint32_t h, uint32_t flags, PixelFormat format, void* client, void* layer)
+void addLayer(const String8& name, uint32_t width, uint32_t height, uint32_t flags, PixelFormat format, void* client, void* layer)
 {
     if (!SurfaceRpcUtilInst.isShareEnabled || !SurfaceRpcUtilInst.isConnected || SurfaceRpcUtilInst.isServer) {
         return;
@@ -180,12 +251,24 @@ void addLayer(const String8& name, uint32_t w, uint32_t h, uint32_t flags, Pixel
     if (SurfaceRpcUtilInst.clientToIds.find(client) == SurfaceRpcUtilInst.clientToIds.end()) {
         return;
     }
-    LayerDef* def = new LayerDef(name, w, h, flags, format, client, layer);
-    SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_ADD_LAYER, 0, def);
-    pthread_mutex_lock(&queueLock);
-    reqQueue.push(request);
-    pthread_cond_signal(&queueCond);
-    pthread_mutex_unlock(&queueLock);
+    int clientId = SurfaceRpcUtilInst.clientToIds[client];
+    
+    RpcRequest* request = new RpcRequest(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_ADD_LAYER, SurfaceRpcUtilInst.rpcclient->socketFd, true);
+    size_t len = name.length();
+    request->putArg((char*) &len, sizeof(len));
+    request->putArg((char*) name.string(), len);
+    request->putArg((char*) &width, sizeof(width));
+    request->putArg((char*) &height, sizeof(height));
+    request->putArg((char*) &flags, sizeof(flags));
+    request->putArg((char*) &format, sizeof(format));
+    request->putArg((char*) &clientId, sizeof(clientId));
+    
+    RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
+    int layerId;
+    response->getRet((char*) &layerId, sizeof(layerId));
+    delete response;
+    SurfaceRpcUtilInst.layerToIds[layer] = layerId;
+    ALOGI("rpc surface flinger add a layer");
 }
 
 void removeLayer(void* layer)
@@ -236,6 +319,46 @@ void syncLayer(sp<GraphicBuffer> buffer, void* client, void* layer)
     }
     int layerId = SurfaceRpcUtilInst.layerToIds[layer];
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_SYNC_LAYER, layerId, def);
+    pthread_mutex_lock(&queueLock);
+    reqQueue.push(request);
+    pthread_cond_signal(&queueCond);
+    pthread_mutex_unlock(&queueLock);
+}
+
+void updateLayerState(void* client, void* layer, layer_state_t state)
+{
+    if (!SurfaceRpcUtilInst.isShareEnabled || !SurfaceRpcUtilInst.isConnected || SurfaceRpcUtilInst.isServer) {
+        return;
+    }
+    if (SurfaceRpcUtilInst.clientToIds.find(client) == SurfaceRpcUtilInst.clientToIds.end() ||
+        SurfaceRpcUtilInst.layerToIds.find(layer) == SurfaceRpcUtilInst.layerToIds.end()) {
+        return;
+    }
+    int clientId = SurfaceRpcUtilInst.clientToIds[client];
+    int layerId = SurfaceRpcUtilInst.layerToIds[layer];
+    LayerStateDef* def = new LayerStateDef();
+    def->clientId = clientId;
+    //def->surface = state.surface;;
+    def->what = state.what;
+    def->x = state.x;
+    def->y = state.y;
+    def->z = state.z;
+    def->w = state.w;
+    def->h = state.h;
+    def->layerStack = state.layerStack;
+    def->blur = state.blur;
+    //def->blurMaskSurface = state.blurMaskSurface;
+    def->blurMaskSampling = state.blurMaskSampling;
+    def->blurMaskAlphaThreshold = state.blurMaskAlphaThreshold;
+    def->alpha = state.alpha;
+    def->flags = state.flags;
+    def->mask = state.mask;
+    //def->reserved = state.reserved;
+    def->matrix = state.matrix;
+    def->crop = state.crop;
+    //def->transparentRegion = state.transparentRegion;
+    
+    SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_UPDATE_LAYER_STATE, layerId, def);
     pthread_mutex_lock(&queueLock);
     reqQueue.push(request);
     pthread_cond_signal(&queueCond);

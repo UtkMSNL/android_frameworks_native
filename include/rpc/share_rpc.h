@@ -150,7 +150,7 @@ void readRpcConf(int* isServer, char* serverAddr, int* serverPort, int* sensorCh
 
 void initRpcEndpoint();
 
-bool isNetworkReady();
+bool isNetworkReady(char* fileName);
 
 void initAudioRpcEndpoint();
 
