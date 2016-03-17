@@ -2042,8 +2042,6 @@ void SurfaceFlinger::invalidateLayerStack(uint32_t layerStack,
     }
 }
 
-extern sp<Layer> remoteLayer;
-
 bool SurfaceFlinger::handlePageFlip()
 {
     Region dirtyRegion;
@@ -2075,9 +2073,6 @@ bool SurfaceFlinger::handlePageFlip()
         Layer* layer = layersWithQueuedFrames[i];
         const Region dirty(layer->latchBuffer(visibleRegions));
         const Layer::State& s(layer->getDrawingState());
-        if (layer == remoteLayer.get()) {
-            ALOGE("rpc surface flinger find the painting layer: %p, s: %d", layer, s.z);
-        }
         invalidateLayerStack(s.layerStack, dirty);
     }
 

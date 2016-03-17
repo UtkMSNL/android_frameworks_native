@@ -3,8 +3,8 @@
 
 #include <rpc/share_rpc.h>
 #include <utils/Log.h>
-
-#include "Layer.h"
+#include <map>
+#include <list>
 
 //#define TYPE_ADD_CLIENT 1
 #define TYPE_REMOVE_CLIENT 2
@@ -13,11 +13,17 @@
 #define TYPE_SYNC_LAYER 5
 #define TYPE_UPDATE_LAYER_STATE 6
 
+// allow maximum of 5 frames in queue, new comings are discarded
+#define MAX_ALLOWED_IN_QUEUE 5
+
 namespace android {
 
-static std::queue<SurfaceRpcRequest*> reqQueue;
+static std::list<SurfaceRpcRequest*> reqList;
 static pthread_mutex_t queueLock;
 static pthread_cond_t queueCond;
+
+// stored the number of frames in queue for each layer
+static std::map<int, int> frameInQueue;
 
 /*void doAddClient(SurfaceRpcRequest* clientRequest)
 {
@@ -119,6 +125,7 @@ void doSyncLayer(SurfaceRpcRequest* layerRequest)
     
     RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
     delete response; 
+    frameInQueue[layerId] -= 1;
     ALOGI("rpc surface flinger sync a layer");
 }
 
@@ -144,46 +151,159 @@ void doUpdateLayerState(SurfaceRpcRequest* layerRequest)
     uint8_t flags = def->flags;
     uint8_t mask = def->mask;
     //uint8_t reserved = def->reserved;
-    layer_state_t::matrix22_t matrix = def->matrix;
-    //what = what & ~layer_state_t::eMatrixChanged;
-    Rect crop = def->crop;
-    //what = what & ~layer_state_t::eCropChanged;
-    //Region transparentRegion = def->transparentRegion;
-    what = what & ~layer_state_t::eTransparentRegionChanged;
     
     RpcRequest* request = new RpcRequest(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_UPDATE_LAYER_STATE, SurfaceRpcUtilInst.rpcclient->socketFd, true);
     request->putArg((char*) &clientId, sizeof(clientId));
     request->putArg((char*) &layerId, sizeof(layerId));
     request->putArg((char*) &what, sizeof(what));
-    request->putArg((char*) &x, sizeof(x));
-    request->putArg((char*) &y, sizeof(y));
-    request->putArg((char*) &z, sizeof(z));
-    request->putArg((char*) &w, sizeof(w));
-    request->putArg((char*) &h, sizeof(h));
-    request->putArg((char*) &layerStack, sizeof(layerStack));
-    request->putArg((char*) &blur, sizeof(blur));
-    request->putArg((char*) &blurMaskSampling, sizeof(blurMaskSampling));
-    request->putArg((char*) &blurMaskAlphaThreshold, sizeof(blurMaskAlphaThreshold));
-    request->putArg((char*) &alpha, sizeof(alpha));
-    request->putArg((char*) &flags, sizeof(flags));
-    request->putArg((char*) &mask, sizeof(mask));
-    request->putArg((char*) &matrix, sizeof(matrix));
-    request->putArg((char*) &crop, sizeof(crop));
+    if (what & layer_state_t::ePositionChanged) {
+        request->putArg((char*) &x, sizeof(x));
+        request->putArg((char*) &y, sizeof(y));
+    }
+    if (what & layer_state_t::eLayerChanged) {
+        request->putArg((char*) &z, sizeof(z));
+    }
+    if (what & layer_state_t::eBlurChanged) {
+        request->putArg((char*) &blur, sizeof(blur));
+    }
+    /*if ((cwhat & layer_state_t::eBlurMaskSurfaceChanged) && !(lwhat & layer_state_t::eBlurMaskSurfaceChanged)) {
+        requestInList->blurMaskSurface = request->blurMaskSurface;
+    }*/
+    if (what & layer_state_t::eBlurMaskSamplingChanged) {
+        request->putArg((char*) &blurMaskSampling, sizeof(blurMaskSampling));
+    }
+    if (what & layer_state_t::eBlurMaskAlphaThresholdChanged) {
+        request->putArg((char*) &blurMaskAlphaThreshold, sizeof(blurMaskAlphaThreshold));
+    }
+    if (what & layer_state_t::eSizeChanged) {
+        request->putArg((char*) &w, sizeof(w));
+        request->putArg((char*) &h, sizeof(h));
+    }
+    if (what & layer_state_t::eAlphaChanged) {
+        request->putArg((char*) &alpha, sizeof(alpha));
+    }
+    if (what & layer_state_t::eMatrixChanged) {
+        layer_state_t::matrix22_t matrix = *def->matrix;
+        //what = what & ~layer_state_t::eMatrixChanged;
+        request->putArg((char*) &matrix, sizeof(matrix));
+    }
+    if (what & layer_state_t::eTransparentRegionChanged) {
+        Region transparentRegion = *def->transparentRegion;
+        //what = what & ~layer_state_t::eTransparentRegionChanged;
+        int tregionSize = transparentRegion.getFlattenedSize();
+        char regionBuffer[tregionSize];
+        transparentRegion.flatten((void*) regionBuffer, tregionSize);
+        request->putArg((char*) &tregionSize, sizeof(tregionSize));
+        request->putArg(regionBuffer, tregionSize);
+    }
+    if ((what & layer_state_t::eVisibilityChanged) || 
+        (what & layer_state_t::eOpacityChanged) ||
+        (what & layer_state_t::eTransparencyChanged)) {
+        request->putArg((char*) &flags, sizeof(flags));
+        request->putArg((char*) &mask, sizeof(mask));
+    }
+    if (what & layer_state_t::eCropChanged) {
+        Rect crop = *def->crop;
+        //what = what & ~layer_state_t::eCropChanged;
+        request->putArg((char*) &crop, sizeof(crop));
+    }
+    if (what & layer_state_t::eLayerStackChanged) {
+        request->putArg((char*) &layerStack, sizeof(layerStack));
+    }
     
     RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
     delete response; 
     ALOGI("rpc surface flinger update layer state");
 }
 
+/* this method check if the current state update request can be avoided
+   the reason is that the current frame sync is too slow to sync all the frames on time,
+   therefore, multiple state update before its frame sync needs only to take the last one 
+ */
+/*static bool isDiscardReq(SurfaceRpcRequest* request)
+{
+    int layerId = request->id;
+    for (std::list<SurfaceRpcRequest*>::iterator it=reqList.begin(); it != reqList.end(); ++it) {
+        SurfaceRpcRequest* requestInList = *it;
+        if (requestInList->type == TYPE_SYNC_LAYER && requestInList->id == layerId) {
+            LayerStateDef* cdef = (LayerStateDef*) request->payload;
+            LayerStateDef* ldef = (LayerStateDef*) requestInList->payload;
+            uint32_t cwhat = cdef->what;
+            uint32_t lwhat = ldef->what;
+            ldef->what |= cwhat;
+            // combine the request effect
+            if ((cwhat & layer_state_t::ePositionChanged) && !(lwhat & layer_state_t::ePositionChanged)) {
+                ldef->x = cdef->x;
+                ldef->y = cdef->y;
+            }
+            if ((cwhat & layer_state_t::eLayerChanged) && !(lwhat & layer_state_t::eLayerChanged)) {
+                ldef->z = cdef->z;
+            }
+            if ((cwhat & layer_state_t::eBlurChanged) && !(lwhat & layer_state_t::eBlurChanged)) {
+                ldef->blur = cdef->blur;
+            }
+            //if ((cwhat & layer_state_t::eBlurMaskSurfaceChanged) && !(lwhat & layer_state_t::eBlurMaskSurfaceChanged)) {
+            //    ldef->blurMaskSurface = cdef->blurMaskSurface;
+            //}
+            if ((cwhat & layer_state_t::eBlurMaskSamplingChanged) && !(lwhat & layer_state_t::eBlurMaskSamplingChanged)) {
+                ldef->blurMaskSampling = cdef->blurMaskSampling;
+            }
+            if ((cwhat & layer_state_t::eBlurMaskAlphaThresholdChanged) && !(lwhat & layer_state_t::eBlurMaskAlphaThresholdChanged)) {
+                ldef->blurMaskAlphaThreshold = cdef->blurMaskAlphaThreshold;
+            }
+            if ((cwhat & layer_state_t::eSizeChanged) && !(lwhat & layer_state_t::eSizeChanged)) {
+                ldef->w = cdef->w;
+                ldef->h = cdef->h;
+            }
+            if ((cwhat & layer_state_t::eAlphaChanged) && !(lwhat & layer_state_t::eAlphaChanged)) {
+                ldef->alpha = cdef->alpha;
+            }
+            if ((cwhat & layer_state_t::eMatrixChanged) && !(lwhat & layer_state_t::eMatrixChanged)) {
+                ALOGE("rpc surface flinger start matrix, %p, %p", ldef->matrix, cdef->matrix);
+                ldef->matrix = new layer_state_t::matrix22_t();
+                memcpy(ldef->matrix, cdef->matrix, sizeof(layer_state_t::matrix22_t));
+                ALOGE("rpc surface flinger end matrix");
+            }
+            if ((cwhat & layer_state_t::eTransparentRegionChanged) && !(lwhat & layer_state_t::eTransparentRegionChanged)) {
+                ALOGE("rpc surface flinger start region");
+                ldef->transparentRegion = new Region(*cdef->transparentRegion);
+                ALOGE("rpc surface flinger end region");
+                //ldef->transparentRegion.orSelf(cdef->transparentRegion);
+                //Region tmpRegion(cdef->transparentRegion);
+                //ldef->transparentRegion = tmpRegion;
+            }
+            if (((cwhat & layer_state_t::eVisibilityChanged) && !(lwhat & layer_state_t::eVisibilityChanged)) || 
+                ((cwhat & layer_state_t::eOpacityChanged) && !(lwhat & layer_state_t::eOpacityChanged)) ||
+                ((cwhat & layer_state_t::eTransparencyChanged) && !(lwhat & layer_state_t::eTransparencyChanged))) {
+                ldef->flags = cdef->flags;
+                ldef->mask = cdef->mask;
+            }
+            if ((cwhat & layer_state_t::eCropChanged) && !(lwhat & layer_state_t::eCropChanged)) {
+                ALOGE("rpc surface flinger start crop");
+                ldef->crop = new Rect(cdef->crop->left, cdef->crop->top, cdef->crop->right, cdef->crop->bottom);
+                ALOGE("rpc surface flinger end crop");
+            }
+            if ((cwhat & layer_state_t::eLayerStackChanged) && !(lwhat & layer_state_t::eLayerStackChanged)) {
+                ldef->layerStack = cdef->layerStack;
+            }
+            return true;
+        }
+        if (requestInList->type == TYPE_SYNC_LAYER && requestInList->id == layerId) {
+            return false;
+        }
+    }
+    return false;
+}*/
+
 static void* sfthLoop(void* args)
 {
     while (true) {
         pthread_mutex_lock(&queueLock);
-        if (reqQueue.empty()) {
+        if (reqList.empty()) {
             pthread_cond_wait(&queueCond, &queueLock);
         }
-        SurfaceRpcRequest* request = reqQueue.front();
-        reqQueue.pop();
+        SurfaceRpcRequest* request = reqList.front();
+        reqList.pop_front();
         pthread_mutex_unlock(&queueLock);
         switch (request->type) {
 //            case TYPE_ADD_CLIENT: doAddClient(request);
@@ -196,7 +316,10 @@ static void* sfthLoop(void* args)
                             break;
             case TYPE_SYNC_LAYER: doSyncLayer(request);
                             break;
-            case TYPE_UPDATE_LAYER_STATE: doUpdateLayerState(request);
+            case TYPE_UPDATE_LAYER_STATE: 
+                            //if (!isDiscardReq(request)) { commented out because of runtime error
+                                doUpdateLayerState(request);
+                            //}
                             break;
         }
         delete request;
@@ -238,7 +361,7 @@ void removeClient(void* client)
     SurfaceRpcUtilInst.clientToIds.erase(client);
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_REMOVE_CLIENT, clientId);
     pthread_mutex_lock(&queueLock);
-    reqQueue.push(request);
+    reqList.push_back(request);
     pthread_cond_signal(&queueCond);
     pthread_mutex_unlock(&queueLock);
 }
@@ -283,7 +406,7 @@ void removeLayer(void* layer)
     SurfaceRpcUtilInst.layerToIds.erase(layer);
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_REMOVE_LAYER, layerId);
     pthread_mutex_lock(&queueLock);
-    reqQueue.push(request);
+    reqList.push_back(request);
     pthread_cond_signal(&queueCond);
     pthread_mutex_unlock(&queueLock);
 }
@@ -295,6 +418,13 @@ void syncLayer(sp<GraphicBuffer> buffer, void* client, void* layer)
     }
     if (SurfaceRpcUtilInst.clientToIds.find(client) == SurfaceRpcUtilInst.clientToIds.end() ||
         SurfaceRpcUtilInst.layerToIds.find(layer) == SurfaceRpcUtilInst.layerToIds.end()) {
+        return;
+    }
+    int layerId = SurfaceRpcUtilInst.layerToIds[layer];
+    if (frameInQueue.find(layerId) == frameInQueue.end()) {
+        frameInQueue[layerId] = 0;
+    }
+    if (frameInQueue[layerId] >= MAX_ALLOWED_IN_QUEUE) {
         return;
     }
     uint8_t* data;
@@ -309,20 +439,30 @@ void syncLayer(sp<GraphicBuffer> buffer, void* client, void* layer)
     int usage = buffer->usage;
     int clientId = SurfaceRpcUtilInst.clientToIds[client];
     BufferDef* def = new BufferDef(clientId, width, height, stride, format, usage);
-    const size_t bpp = bytesPerPixel(format);
-    const size_t size = height * stride * bpp;
+    const ssize_t bpp = bytesPerPixel(format);
+    size_t size;
+    if (bpp > 0) {
+        size = stride * height * bpp;
+    } else {
+        if (format == 0x7fa30c03) { // qualcomm proprietary format　QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka, See: https://mailman.videolan.org/pipermail/vlc-commits/2013-September/022245.html          and See: ACodec.cpp  
+            const size_t bpp = 1;
+            const size_t bpr = stride * bpp;
+            size = bpr * height + ((bpr + 1) / 2) * ((height + 1) / 2) * 2;
+        }
+    }
     def->size = size;
     def->data = (uint8_t*) malloc(size);
     memcpy(def->data, data, size);
     if (data) {
         buffer->unlock();
     }
-    int layerId = SurfaceRpcUtilInst.layerToIds[layer];
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_SYNC_LAYER, layerId, def);
     pthread_mutex_lock(&queueLock);
-    reqQueue.push(request);
+    reqList.push_back(request);
+    frameInQueue[layerId] += 1;
     pthread_cond_signal(&queueCond);
     pthread_mutex_unlock(&queueLock);
+    ALOGI("rpc surface flinger finish sync layer, data is: %p, size is: %d, format is: %d", def->data, size, format);
 }
 
 void updateLayerState(void* client, void* layer, layer_state_t state)
@@ -354,13 +494,20 @@ void updateLayerState(void* client, void* layer, layer_state_t state)
     def->flags = state.flags;
     def->mask = state.mask;
     //def->reserved = state.reserved;
-    def->matrix = state.matrix;
-    def->crop = state.crop;
-    //def->transparentRegion = state.transparentRegion;
+    if (def->what & layer_state_t::eMatrixChanged) {
+        def->matrix = new layer_state_t::matrix22_t();
+        memcpy(def->matrix, &state.matrix, sizeof(layer_state_t::matrix22_t));
+    }
+    if (def->what & layer_state_t::eCropChanged) {
+        def->crop = new Rect(state.crop.left, state.crop.top, state.crop.right, state.crop.bottom);
+    }
+    if (def->what & layer_state_t::eTransparentRegionChanged) {
+        def->transparentRegion = new Region(state.transparentRegion);
+    }
     
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_UPDATE_LAYER_STATE, layerId, def);
     pthread_mutex_lock(&queueLock);
-    reqQueue.push(request);
+    reqList.push_back(request);
     pthread_cond_signal(&queueCond);
     pthread_mutex_unlock(&queueLock);
 }

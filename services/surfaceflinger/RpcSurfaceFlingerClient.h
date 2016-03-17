@@ -5,11 +5,11 @@
 #include <utils/String8.h>
 #include <utils/StrongPointer.h>
 #include <gui/BufferQueue.h>
+#include <ui/Region.h>
 #include <private/gui/LayerState.h>
 
 #include <pthread.h>
 #include <cstdlib>
-#include <queue>
 
 namespace android {
 
@@ -92,9 +92,29 @@ struct LayerStateDef
     uint8_t         flags;
     uint8_t         mask;
     //uint8_t         reserved;
-    layer_state_t::matrix22_t      matrix;
-    Rect            crop;
-    //Region          transparentRegion;
+    layer_state_t::matrix22_t*      matrix;
+    Rect*            crop;
+    Region*          transparentRegion;
+    
+    LayerStateDef()
+    {
+        matrix = NULL;
+        crop = NULL;
+        transparentRegion = NULL;
+    }
+    
+    ~LayerStateDef()
+    {
+        if (matrix != NULL) {
+            delete matrix;
+        }
+        if (crop != NULL) {
+            delete crop;
+        }
+        if (transparentRegion != NULL) {
+            delete transparentRegion;
+        }
+    }
 };
 
 void addClient(void* client);

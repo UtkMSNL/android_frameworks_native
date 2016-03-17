@@ -39,7 +39,6 @@ RpcResponse* SurfaceFlinger_removeClient(RpcRequest* request)
     return response; 
 }
 
-sp<Layer> remoteLayer;
 RpcResponse* SurfaceFlinger_addLayer(RpcRequest* request)
 {
     size_t len;
@@ -70,7 +69,6 @@ RpcResponse* SurfaceFlinger_addLayer(RpcRequest* request)
     // set layer z
     sp<Layer> layer = client->getLayerUser(handle);
     //((sp<ISurfaceComposerClient>) client)->setLayer(handle, 0xffffffff);
-    remoteLayer = layer;
     
     ALOGI("rpc surface flinger add a layer server, ptr[%p]", layer.get());
     RpcResponse* response = new RpcResponse(true);
@@ -129,6 +127,7 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
     status_t err = producer->dequeueBuffer(&buf, &fence, false, width, height, format, usage);
     if (err < 0) {
         ALOGE("rpc camera service dequeue buffer failed in listener");
+        free(data);
         return response;
     }
     sp<GraphicBuffer>& gbuf(slots[buf]);
@@ -142,6 +141,7 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
         if (err != NO_ERROR) {
             ALOGE("rpc camera service dequeueBuffer: IGraphicBufferProducer::requestBuffer failed: %d", err);
             producer->cancelBuffer(buf, fence);
+            free(data);
             return response;
         }
     }
@@ -176,6 +176,7 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
     if (err != OK)  {
         ALOGE("rpc surface flinger queueBuffer: error queuing buffer, %d", err);
     }
+    free(data);
     ALOGI("rpc surface flinger sync a layer server");
     return response;
 }
@@ -188,20 +189,55 @@ RpcResponse* SurfaceFlinger_updateLayerState(RpcRequest* request)
     request->getArg((char*) &layerId, sizeof(layerId));
     layer_state_t state;
     request->getArg((char*) &state.what, sizeof(state.what));
-    request->getArg((char*) &state.x, sizeof(state.x));
-    request->getArg((char*) &state.y, sizeof(state.y));
-    request->getArg((char*) &state.z, sizeof(state.z));
-    request->getArg((char*) &state.w, sizeof(state.w));
-    request->getArg((char*) &state.h, sizeof(state.h));
-    request->getArg((char*) &state.layerStack, sizeof(state.layerStack));
-    request->getArg((char*) &state.blur, sizeof(state.blur));
-    request->getArg((char*) &state.blurMaskSampling, sizeof(state.blurMaskSampling));
-    request->getArg((char*) &state.blurMaskAlphaThreshold, sizeof(state.blurMaskAlphaThreshold));
-    request->getArg((char*) &state.alpha, sizeof(state.alpha));
-    request->getArg((char*) &state.flags, sizeof(state.flags));
-    request->getArg((char*) &state.mask, sizeof(state.mask));
-    request->getArg((char*) &state.matrix, sizeof(state.matrix));
-    request->getArg((char*) &state.crop, sizeof(state.crop));
+    uint32_t what = state.what;
+    if (what & layer_state_t::ePositionChanged) {
+        request->getArg((char*) &state.x, sizeof(state.x));
+        request->getArg((char*) &state.y, sizeof(state.y));
+    }
+    if (what & layer_state_t::eLayerChanged) {
+        request->getArg((char*) &state.z, sizeof(state.z));
+    }
+    if (what & layer_state_t::eBlurChanged) {
+        request->getArg((char*) &state.blur, sizeof(state.blur));
+    }
+    /*if ((cwhat & layer_state_t::eBlurMaskSurfaceChanged) && !(lwhat & layer_state_t::eBlurMaskSurfaceChanged)) {
+        requestInList->blurMaskSurface = request->blurMaskSurface;
+    }*/
+    if (what & layer_state_t::eBlurMaskSamplingChanged) {
+        request->getArg((char*) &state.blurMaskSampling, sizeof(state.blurMaskSampling));
+    }
+    if (what & layer_state_t::eBlurMaskAlphaThresholdChanged) {
+        request->getArg((char*) &state.blurMaskAlphaThreshold, sizeof(state.blurMaskAlphaThreshold));
+    }
+    if (what & layer_state_t::eSizeChanged) {
+        request->getArg((char*) &state.w, sizeof(state.w));
+        request->getArg((char*) &state.h, sizeof(state.h));
+    }
+    if (what & layer_state_t::eAlphaChanged) {
+        request->getArg((char*) &state.alpha, sizeof(state.alpha));
+    }
+    if (what & layer_state_t::eMatrixChanged) {
+        request->getArg((char*) &state.matrix, sizeof(state.matrix));
+    }
+    if (what & layer_state_t::eTransparentRegionChanged) {
+        int tregionSize;
+        request->getArg((char*) &tregionSize, sizeof(tregionSize));
+        char regionBuffer[tregionSize];
+        request->getArg(regionBuffer, tregionSize);
+        state.transparentRegion.unflatten((void*) regionBuffer, tregionSize);
+    }
+    if ((what & layer_state_t::eVisibilityChanged) || 
+        (what & layer_state_t::eOpacityChanged) ||
+        (what & layer_state_t::eTransparencyChanged)) {
+        request->getArg((char*) &state.flags, sizeof(state.flags));
+        request->getArg((char*) &state.mask, sizeof(state.mask));
+    }
+    if (what & layer_state_t::eCropChanged) {
+        request->getArg((char*) &state.crop, sizeof(state.crop));
+    }
+    if (what & layer_state_t::eLayerStackChanged) {
+        request->getArg((char*) &state.layerStack, sizeof(state.layerStack));
+    }
     
     sp<Client> client = *((sp<Client>*) SurfaceRpcUtilInst.idToClients[clientId]);
     sp<IBinder> handler = *((sp<IBinder>*) SurfaceRpcUtilInst.idToLayers[layerId]);

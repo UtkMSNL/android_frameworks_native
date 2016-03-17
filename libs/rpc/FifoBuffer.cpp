@@ -8,7 +8,7 @@
 namespace android {
 // ---------------------------------------------------------------------------
 
-#define BUFFERSIZE (1 << 14) // 16Kb
+#define BUFFERSIZE (1 << 16) // 64Kb
 
 FifoBuffer* fifoCreate() {
     FifoBuffer* fb = new FifoBuffer();
