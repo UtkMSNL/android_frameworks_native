@@ -112,7 +112,8 @@ LOCAL_SHARED_LIBRARIES := \
 	libgui \
 	libpowermanager \
     libsrpc \
-	libstlport
+	libstlport \
+	libskia
 
 ifeq ($(TARGET_USES_QCOM_BSP), true)
     LOCAL_C_INCLUDES += $(call project-path-for,qcom-display)/libgralloc
@@ -127,7 +128,11 @@ ifeq ($(TARGET_HAVE_UI_BLUR),true)
     LOCAL_CFLAGS += -DUI_BLUR
 endif
 
-LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include
+LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include \
+    external/skia/include/core \
+	external/skia/src/core \
+	external/skia/src/effects \
+	external/skia/src/images
 
 LOCAL_MODULE:= libsurfaceflinger
 
@@ -152,7 +157,8 @@ LOCAL_SHARED_LIBRARIES := \
 	libutils \
 	libdl \
     libsrpc \
-	libstlport
+	libstlport \
+	libskia
 
 LOCAL_WHOLE_STATIC_LIBRARIES := libsigchain
 
@@ -162,7 +168,11 @@ ifdef TARGET_32_BIT_SURFACEFLINGER
 LOCAL_32_BIT_ONLY := true
 endif
 
-LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include
+LOCAL_C_INCLUDES += external/stlport/stlport bionic/ bionic/libstdc++/include \
+    external/skia/include/core \
+	external/skia/src/core \
+	external/skia/src/effects \
+	external/skia/src/images
 
 include $(BUILD_EXECUTABLE)
 

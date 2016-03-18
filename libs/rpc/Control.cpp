@@ -37,7 +37,7 @@ namespace android {
 #define MAX_CONTROL_VPACKET_SIZE (1<<16)
 
 // TODO: Move compression only into tcpmux layer.
-//#define USE_COMPRESSION
+#define USE_COMPRESSION
 
 #ifdef USE_COMPRESSION
 #include "zlib.h"
@@ -219,7 +219,7 @@ void message_loop(RpcEndpoint* endpoint) {
                 wstrm.next_out = (unsigned char*)(wind->wtmpbuf);
                 //ALOGE("rpc service control start to deflate, %d - %d - %d", ntohl(wind->whdr.sz), wind->whdr.seqNo, ntohl(wind->whdr.totalSz));
                 deflate(&wstrm, Z_SYNC_FLUSH);
-                ALOGE("rpc service control after deflating, %d - %d - %d", ntohl(wind->whdr.sz), sizeof(wind->wtmpbuf) - wstrm.avail_out, wstrm.avail_in);
+                //ALOGE("rpc service control after deflating, %d - %d - %d", ntohl(wind->whdr.sz), sizeof(wind->wtmpbuf) - wstrm.avail_out, wstrm.avail_in);
                 wind->wbuf = wind->wtmpbuf;
                 wind->whdr.sz = htonl(sizeof(wind->wtmpbuf) - wstrm.avail_out);
                 }

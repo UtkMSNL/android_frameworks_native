@@ -6,6 +6,19 @@
 #include <map>
 #include <list>
 
+
+#include "SkBitmap.h"
+#include "SkData.h"
+#include "SkPixelRef.h"
+#include "SkImageEncoder.h"
+#include "SkImageInfo.h"
+#include "SkColorPriv.h"
+#include "SkDither.h"
+#include "SkUnPreMultiply.h"
+#include "SkStream.h"
+
+#include "time.h" 
+
 //#define TYPE_ADD_CLIENT 1
 #define TYPE_REMOVE_CLIENT 2
 //#define TYPE_ADD_LAYER 3
@@ -19,8 +32,12 @@
 namespace android {
 
 static std::list<SurfaceRpcRequest*> reqList;
+// this is a list to cache the layers whose image has not been compressed yet
+static std::list<SurfaceRpcRequest*> layerSyncList;
 static pthread_mutex_t queueLock;
 static pthread_cond_t queueCond;
+static pthread_mutex_t layerSyncLock;
+static pthread_cond_t layerSyncCond;
 
 // stored the number of frames in queue for each layer
 static std::map<int, int> frameInQueue;
@@ -43,6 +60,7 @@ static std::map<int, int> frameInQueue;
 
 void doRemoveClient(SurfaceRpcRequest* clientRequest)
 {
+    ALOGI("rpc surface flinger start doRemoveClient");
     int clientId = clientRequest->id;
     
     RpcRequest* request = new RpcRequest(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_REMOVE_CLIENT, SurfaceRpcUtilInst.rpcclient->socketFd, true);
@@ -89,6 +107,7 @@ void doRemoveClient(SurfaceRpcRequest* clientRequest)
 
 void doRemoveLayer(SurfaceRpcRequest* layerRequest)
 {
+    ALOGI("rpc surface flinger start to remove a layer");
     int layerId = layerRequest->id;
     
     RpcRequest* request = new RpcRequest(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_REMOVE_LAYER, SurfaceRpcUtilInst.rpcclient->socketFd, true);
@@ -101,11 +120,17 @@ void doRemoveLayer(SurfaceRpcRequest* layerRequest)
 
 void doSyncLayer(SurfaceRpcRequest* layerRequest)
 {
+    ALOGI("rpc surface flinger start to dosynclayer");
     BufferDef* def = (BufferDef*) layerRequest->payload;
     int clientId = def->clientId;
     int layerId = layerRequest->id;
     size_t size = def->size;
-    uint8_t* data = def->data;
+    uint8_t* data;
+    if (def->data != NULL) {
+        data = def->data;
+    } else {
+        data = (uint8_t*) def->skdata->data();
+    }
     int width = def->width;
     int height = def->height;
     int stride = def->stride;
@@ -126,11 +151,12 @@ void doSyncLayer(SurfaceRpcRequest* layerRequest)
     RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
     delete response; 
     frameInQueue[layerId] -= 1;
-    ALOGI("rpc surface flinger sync a layer");
+    ALOGI("rpc surface flinger finish sync layer, size is: %d, format is: %d",  size, format);
 }
 
 void doUpdateLayerState(SurfaceRpcRequest* layerRequest)
 {
+    ALOGI("rpc surface flinger start doUpdateLayerState");
     LayerStateDef* def = (LayerStateDef*) layerRequest->payload;
     int clientId = def->clientId;
     int layerId = layerRequest->id;
@@ -295,6 +321,52 @@ void doUpdateLayerState(SurfaceRpcRequest* layerRequest)
     return false;
 }*/
 
+static void compressGraphData(SurfaceRpcRequest* request)
+{
+    BufferDef* def = (BufferDef*) request->payload;
+    int format = def->format;
+    int stride = def->stride;
+    int height = def->height;
+    // TODO: handling other pixel formats
+    if (format != PIXEL_FORMAT_RGBA_8888 && format != PIXEL_FORMAT_RGB_888) {
+        return;
+    }
+    ALOGE("rpc surface flinger start compressGraphData");
+    struct timeval start, finish;
+    gettimeofday(&start, NULL); 
+    // use skia to compress bitmap
+    SkColorType colorType = kRGBA_8888_SkColorType;
+    SkBitmap bitmap;
+    bitmap.setInfo(SkImageInfo::Make(stride, height, colorType, kPremul_SkAlphaType));
+    if (format == PIXEL_FORMAT_RGB_888) {
+        uint8_t* pixels = (uint8_t*) malloc(stride * height * 4);
+        uint8_t* data = def->data;
+        for (int i = 0; i < stride * height; i++) {
+            pixels[i * 4] = data[i * 3];
+            pixels[i * 4 + 1] = data[i * 3 + 1];
+            pixels[i * 4 + 2] = data[i * 3 + 2];
+            pixels[i * 4 + 3] = 0xff;
+        }
+        // free the memory in the request
+        free(data);
+        def->data = pixels;
+    }
+    bitmap.setPixels(def->data, NULL);
+    
+    // compress to png
+    SkImageEncoder::Type fm = SkImageEncoder::kPNG_Type;
+    SkImageEncoder* encoder = SkImageEncoder::Create(fm);
+    def->skdata = encoder->encodeData(bitmap, 100);
+    // free the memory in the request
+    free(def->data);
+    // change the format to rgba_8888 and get the new data in the bitmap
+    def->format = PIXEL_FORMAT_RGBA_8888;
+    def->size = def->skdata->size();
+    def->data = NULL;
+    gettimeofday(&finish, NULL); 
+    ALOGE("rpc surface flinger finish compressGraphData, format: %d, time: %ld", format, (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
+}
+
 static void* sfthLoop(void* args)
 {
     while (true) {
@@ -326,12 +398,51 @@ static void* sfthLoop(void* args)
     }
 }
 
+
+static void* compressLoop(void* args)
+{
+    while (true) {
+        pthread_mutex_lock(&layerSyncLock);
+        if (layerSyncList.empty()) {
+            pthread_cond_wait(&layerSyncCond, &layerSyncLock);
+        }
+        SurfaceRpcRequest* request = layerSyncList.front();
+        layerSyncList.pop_front();
+        pthread_mutex_unlock(&layerSyncLock);
+        
+        switch (request->type) {
+            case TYPE_REMOVE_CLIENT: 
+                            break;
+            case TYPE_REMOVE_LAYER: 
+                            break;
+            case TYPE_SYNC_LAYER: 
+                            if (PNG_COMRESSION_ENABLE) {
+                                compressGraphData(request);
+                            }
+                            break;
+            case TYPE_UPDATE_LAYER_STATE: 
+                            break;
+        }
+        
+        pthread_mutex_lock(&queueLock);
+        reqList.push_back(request);
+        pthread_cond_signal(&queueCond);
+        pthread_mutex_unlock(&queueLock);
+    }
+}
+
 __attribute__ ((visibility ("default"))) void initFlingerClient()
 {
     pthread_mutex_init(&queueLock, NULL);
     pthread_cond_init(&queueCond, NULL);
     pthread_t rpcThread;
     pthread_create(&rpcThread, NULL, sfthLoop, NULL);
+    if (PNG_COMRESSION_ENABLE) {
+        pthread_mutex_init(&layerSyncLock, NULL);
+        pthread_cond_init(&layerSyncCond, NULL);
+        pthread_t compressThread;
+        pthread_create(&compressThread, NULL, compressLoop, NULL);
+    }
 }
 
 void addClient(void* client)
@@ -360,10 +471,17 @@ void removeClient(void* client)
     int clientId = SurfaceRpcUtilInst.clientToIds[client];
     SurfaceRpcUtilInst.clientToIds.erase(client);
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_REMOVE_CLIENT, clientId);
-    pthread_mutex_lock(&queueLock);
-    reqList.push_back(request);
-    pthread_cond_signal(&queueCond);
-    pthread_mutex_unlock(&queueLock);
+    if (PNG_COMRESSION_ENABLE) {
+        pthread_mutex_lock(&layerSyncLock);
+        layerSyncList.push_back(request);
+        pthread_cond_signal(&layerSyncCond);
+        pthread_mutex_unlock(&layerSyncLock);
+    } else {
+        pthread_mutex_lock(&queueLock);
+        reqList.push_back(request);
+        pthread_cond_signal(&queueCond);
+        pthread_mutex_unlock(&queueLock);
+    }
 }
 
 void addLayer(const String8& name, uint32_t width, uint32_t height, uint32_t flags, PixelFormat format, void* client, void* layer)
@@ -405,10 +523,17 @@ void removeLayer(void* layer)
     int layerId = SurfaceRpcUtilInst.layerToIds[layer];
     SurfaceRpcUtilInst.layerToIds.erase(layer);
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_REMOVE_LAYER, layerId);
-    pthread_mutex_lock(&queueLock);
-    reqList.push_back(request);
-    pthread_cond_signal(&queueCond);
-    pthread_mutex_unlock(&queueLock);
+    if (PNG_COMRESSION_ENABLE) {
+        pthread_mutex_lock(&layerSyncLock);
+        layerSyncList.push_back(request);
+        pthread_cond_signal(&layerSyncCond);
+        pthread_mutex_unlock(&layerSyncLock);
+    } else {
+        pthread_mutex_lock(&queueLock);
+        reqList.push_back(request);
+        pthread_cond_signal(&queueCond);
+        pthread_mutex_unlock(&queueLock);
+    }
 }
 
 void syncLayer(sp<GraphicBuffer> buffer, void* client, void* layer)
@@ -457,12 +582,19 @@ void syncLayer(sp<GraphicBuffer> buffer, void* client, void* layer)
         buffer->unlock();
     }
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_SYNC_LAYER, layerId, def);
-    pthread_mutex_lock(&queueLock);
-    reqList.push_back(request);
-    frameInQueue[layerId] += 1;
-    pthread_cond_signal(&queueCond);
-    pthread_mutex_unlock(&queueLock);
-    ALOGI("rpc surface flinger finish sync layer, data is: %p, size is: %d, format is: %d", def->data, size, format);
+    if (PNG_COMRESSION_ENABLE) {
+        pthread_mutex_lock(&layerSyncLock);
+        layerSyncList.push_back(request);
+        frameInQueue[layerId] += 1;
+        pthread_cond_signal(&layerSyncCond);
+        pthread_mutex_unlock(&layerSyncLock);
+    } else {
+        pthread_mutex_lock(&queueLock);
+        reqList.push_back(request);
+        frameInQueue[layerId] += 1;
+        pthread_cond_signal(&queueCond);
+        pthread_mutex_unlock(&queueLock);
+    }
 }
 
 void updateLayerState(void* client, void* layer, layer_state_t state)
@@ -506,10 +638,17 @@ void updateLayerState(void* client, void* layer, layer_state_t state)
     }
     
     SurfaceRpcRequest* request = new SurfaceRpcRequest(TYPE_UPDATE_LAYER_STATE, layerId, def);
-    pthread_mutex_lock(&queueLock);
-    reqList.push_back(request);
-    pthread_cond_signal(&queueCond);
-    pthread_mutex_unlock(&queueLock);
+    if (PNG_COMRESSION_ENABLE) {
+        pthread_mutex_lock(&layerSyncLock);
+        layerSyncList.push_back(request);
+        pthread_cond_signal(&layerSyncCond);
+        pthread_mutex_unlock(&layerSyncLock);
+    } else {
+        pthread_mutex_lock(&queueLock);
+        reqList.push_back(request);
+        pthread_cond_signal(&queueCond);
+        pthread_mutex_unlock(&queueLock);
+    }
 }
 
 }; // namespace android

@@ -5,6 +5,11 @@
 #include "Client.h"
 #include "Layer.h"
 
+#include "SkBitmap.h"
+#include "SkImageDecoder.h"
+#include "SkStream.h"
+#include "SkUtils.h"
+
 #include <rpc/share_rpc.h>
 #include <ui/PixelFormat.h>
 #include <utils/StrongPointer.h>
@@ -152,6 +157,34 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
             // keep going
         }
     }
+    
+    // decode the png graph for PIXEL_FORMAT_RGBA_8888, refer: nativeDecodeByteArray()@BitmapFactory.cpp 
+    SkBitmap* outputBitmap = NULL;
+    if (PNG_COMRESSION_ENABLE) {
+        if (format == PIXEL_FORMAT_RGBA_8888) {
+            SkMemoryStream* stream = new SkMemoryStream(data, size, false);
+            SkAutoUnref aur(stream);
+            SkImageDecoder::Mode decodeMode = SkImageDecoder::kDecodePixels_Mode;
+            SkImageDecoder* decoder = SkImageDecoder::Factory(stream);
+            decoder->setSampleSize(1);
+            decoder->setDitherImage(true);
+            decoder->setPreferQualityOverSpeed(false);
+            decoder->setRequireUnpremultipliedColors(false);
+            outputBitmap = new SkBitmap();
+            
+            SkAutoTDelete<SkImageDecoder> add(decoder);
+            SkColorType prefColorType = kN32_SkColorType;
+            if (decoder->decode(stream, outputBitmap, prefColorType, decodeMode)
+                    != SkImageDecoder::kSuccess) {
+                ALOGE("rpc surface flinger decode png to arga_8888 failed");
+                return response;
+            }
+            free(data);
+            size = outputBitmap->getSize();
+            data = (uint8_t*) outputBitmap->getPixels();
+        }
+    }
+    
     sp<GraphicBuffer> dst(gbuf);
     uint8_t* dst_bits = NULL;
     err = dst->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, (void**)&dst_bits);
@@ -176,7 +209,11 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
     if (err != OK)  {
         ALOGE("rpc surface flinger queueBuffer: error queuing buffer, %d", err);
     }
-    free(data);
+    if (outputBitmap != NULL) {
+        delete outputBitmap;
+    } else {
+        free(data);
+    }
     ALOGI("rpc surface flinger sync a layer server");
     return response;
 }

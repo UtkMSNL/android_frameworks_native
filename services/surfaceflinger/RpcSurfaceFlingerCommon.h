@@ -8,6 +8,8 @@
 #define SF_METH_SYNC_LAYER 5
 #define SF_METH_UPDATE_LAYER_STATE 6
 
+#define PNG_COMRESSION_ENABLE 0
+
 namespace android {
 
 }; // namespace android

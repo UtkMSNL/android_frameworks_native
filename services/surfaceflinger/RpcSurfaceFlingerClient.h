@@ -11,6 +11,8 @@
 #include <pthread.h>
 #include <cstdlib>
 
+#include "SkData.h"
+
 namespace android {
 
 struct SurfaceRpcRequest
@@ -55,7 +57,9 @@ struct LayerDef
 struct BufferDef
 {
     int clientId;
+    // either data or skdata will have data
     uint8_t* data;
+    SkData* skdata;
     size_t size;
     int width;
     int height;
