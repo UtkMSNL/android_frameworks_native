@@ -28,6 +28,7 @@ void fifoDestroy(FifoBuffer* fb) {
         free(fb->freeBufs.at(i));
     }
     fb->freeBufs.clear();
+    delete fb;
 }
 
 bool fifoEmpty(FifoBuffer* fb) {

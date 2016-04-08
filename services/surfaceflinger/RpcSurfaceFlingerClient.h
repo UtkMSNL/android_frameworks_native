@@ -7,6 +7,7 @@
 #include <gui/BufferQueue.h>
 #include <ui/Region.h>
 #include <private/gui/LayerState.h>
+#include <utils/Log.h>
 
 #include <pthread.h>
 #include <cstdlib>
@@ -15,19 +16,26 @@
 
 namespace android {
 
-struct SurfaceRpcRequest
+class OpDef
 {
+public:
+    virtual ~OpDef() {}
+};
+
+class SurfaceRpcRequest
+{
+public:
     int type; // the type of the request
     int id; // the associate id to perform
-    void* payload; // the data associated with this request
+    OpDef* payload; // the data associated with this request
     
-    SurfaceRpcRequest(int vType, int vId = 0, void* vPayload = NULL)
+    SurfaceRpcRequest(int vType, int vId = 0, OpDef* vPayload = NULL)
         : type(vType), id(vId), payload(vPayload) {}
         
     ~SurfaceRpcRequest()
     {
         if (payload != NULL) {
-            delete [] reinterpret_cast <char*> (payload);
+            delete payload;
         }
     }
 };
@@ -54,8 +62,9 @@ struct LayerDef
         : name(vName), width(vWidth), height(vHeight), flags(vFlags), format(vFormat), client(vClient), layer(vLayer) {}
 };*/
 
-struct BufferDef
+class BufferDef : public OpDef
 {
+public:
     int clientId;
     // either data or skdata will have data
     uint8_t* data;
@@ -70,15 +79,16 @@ struct BufferDef
     BufferDef(int vClientId, int vWidth, int vHeight, int vStride, int vFormat, int vUsage)
         : clientId(vClientId), width(vWidth), height(vHeight), stride(vStride), format(vFormat), usage(vUsage) {}
     
-    ~BufferDef()
+    virtual ~BufferDef()
     {
         free(data);
     }
 };
 
 // the fields commented out are not supported by now
-struct LayerStateDef
+struct LayerStateDef : public OpDef
 {
+public:
     int clientId;
     //sp<IBinder>     surface;
     uint32_t        what;
@@ -107,7 +117,7 @@ struct LayerStateDef
         transparentRegion = NULL;
     }
     
-    ~LayerStateDef()
+    virtual ~LayerStateDef()
     {
         if (matrix != NULL) {
             delete matrix;

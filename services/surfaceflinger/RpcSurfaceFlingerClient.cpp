@@ -121,6 +121,7 @@ void doRemoveLayer(SurfaceRpcRequest* layerRequest)
 void doSyncLayer(SurfaceRpcRequest* layerRequest)
 {
     ALOGI("rpc surface flinger start to dosynclayer");
+    CLIENT_METH_PROFILING_START(SurfaceRpcUtilInst.SURFACE_SERVICE_ID, SF_METH_SYNC_LAYER)
     BufferDef* def = (BufferDef*) layerRequest->payload;
     int clientId = def->clientId;
     int layerId = layerRequest->id;
@@ -149,6 +150,7 @@ void doSyncLayer(SurfaceRpcRequest* layerRequest)
     request->putArg((char*) &usage, sizeof(usage));
     
     RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
+    CLIENT_METH_PROFILING_END(response->seqNo)
     delete response; 
     frameInQueue[layerId] -= 1;
     ALOGI("rpc surface flinger finish sync layer, size is: %d, format is: %d",  size, format);
@@ -238,7 +240,7 @@ void doUpdateLayerState(SurfaceRpcRequest* layerRequest)
     }
     
     RpcResponse* response = SurfaceRpcUtilInst.rpcclient->doRpc(request);
-    delete response; 
+    delete response;
     ALOGI("rpc surface flinger update layer state");
 }
 

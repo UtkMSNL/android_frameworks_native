@@ -37,7 +37,7 @@ namespace android {
 #define MAX_CONTROL_VPACKET_SIZE (1<<16)
 
 // TODO: Move compression only into tcpmux layer.
-#define USE_COMPRESSION
+//#define USE_COMPRESSION
 
 #ifdef USE_COMPRESSION
 #include "zlib.h"
@@ -63,16 +63,16 @@ namespace android {
       break;                                                                \
     }*/
 
-#ifdef LOG_RPC_TIME
-struct timeval start, finish; 
-#endif
-#ifdef CPU_TIME
-    extern clock_t requestStartClock, requestSendClock, responseStartClock, responseSendClock, reqResGetStart, reqResFinishClock;
-#else
-    extern struct timeval requestStartClock, requestSendClock, responseStartClock, responseSendClock, reqResGetStart, reqResFinishClock;
-#endif
-
 int rpcNetPipe[2];
+
+// total number of bytes actually read
+u8 totalReadBytes = 0;
+// total number of bytes actually write
+u8 totalWriteBytes = 0;
+// total number of bytes shall read if without compression
+u8 totalOReadBytes = 0;
+// total number of bytes shall write if without compression
+u8 totalOWriteBytes = 0;
 
 typedef struct MsgHeader {
     u1 type;
@@ -213,15 +213,17 @@ void message_loop(RpcEndpoint* endpoint) {
 #ifdef USE_COMPRESSION
                 /* Perform the compression with zlib. */
                 if (ntohl(wind->whdr.sz) != 0) {
-                wstrm.avail_in = ntohl(wind->whdr.sz);
-                wstrm.next_in = (unsigned char*)wind->wbuf;
-                wstrm.avail_out = sizeof(wind->wtmpbuf);
-                wstrm.next_out = (unsigned char*)(wind->wtmpbuf);
-                //ALOGE("rpc service control start to deflate, %d - %d - %d", ntohl(wind->whdr.sz), wind->whdr.seqNo, ntohl(wind->whdr.totalSz));
-                deflate(&wstrm, Z_SYNC_FLUSH);
-                //ALOGE("rpc service control after deflating, %d - %d - %d", ntohl(wind->whdr.sz), sizeof(wind->wtmpbuf) - wstrm.avail_out, wstrm.avail_in);
-                wind->wbuf = wind->wtmpbuf;
-                wind->whdr.sz = htonl(sizeof(wind->wtmpbuf) - wstrm.avail_out);
+                    COMPRESSION_PROFILING_START()
+                    wstrm.avail_in = ntohl(wind->whdr.sz);
+                    wstrm.next_in = (unsigned char*)wind->wbuf;
+                    wstrm.avail_out = sizeof(wind->wtmpbuf);
+                    wstrm.next_out = (unsigned char*)(wind->wtmpbuf);
+                    //ALOGE("rpc service control start to deflate, %d - %d - %d", ntohl(wind->whdr.sz), wind->whdr.seqNo, ntohl(wind->whdr.totalSz));
+                    deflate(&wstrm, Z_SYNC_FLUSH);
+                    //ALOGE("rpc service control after deflating, %d - %d - %d", ntohl(wind->whdr.sz), sizeof(wind->wtmpbuf) - wstrm.avail_out, wstrm.avail_in);
+                    wind->wbuf = wind->wtmpbuf;
+                    wind->whdr.sz = htonl(sizeof(wind->wtmpbuf) - wstrm.avail_out);
+                    COMPRESSION_PROFILING_END(ntohl(wind->whdr.seqNo), "compression")
                 }
 #endif
                 //csent_bytes += ntohl(whdr.sz);
@@ -249,9 +251,6 @@ void message_loop(RpcEndpoint* endpoint) {
         for(unsigned int i = 0; i < wsfds.size(); i++) {
             FD_SET(wsfds.at(i), &wrst);   // to check if it is able to write to the other endpoint
         }
-        /*struct timeval timeout;
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 10000;*/
         res = select(nfd, &rdst, &wrst, NULL, NULL);
         CHECK_RESULT("select", res);
 
@@ -260,12 +259,18 @@ void message_loop(RpcEndpoint* endpoint) {
             if(FD_ISSET(sockFd, &rdst)) {
                 ReadInd* rind = readInds[sockFd];
                 if(rind->rst == 0) { // indicating that it is now reading message header
-#ifdef LOG_RPC_TIME
-                    gettimeofday(&start, NULL);
-#endif
                     res = read(sockFd, ((char*)&rind->rhdr) + rind->rpos, rind->rsz - rind->rpos);
                     CHECK_RESULT("read", res);
+                    // FIXME: this might be wrong. but when there is a bug when the remote end is closed by exception, then this end will always return as be able to read and cause dead loop
+                    if (res == 0) {
+                        close(sockFd);
+                        delete readInds[sockFd];
+                        readInds.erase(sockFd);
+                        continue;
+                    }
                     rind->rpos += res;
+                    totalReadBytes += res;
+                    totalOReadBytes += res;
 
                     if(rind->rpos == rind->rsz) {
                         rind->rhdr.type = rind->rhdr.type;
@@ -286,78 +291,69 @@ void message_loop(RpcEndpoint* endpoint) {
                             //ALOGE("Invalid message size %d", rind->rsz);
                             abort();
                         }
-                    }
-                    if(rind->rsz == 0) {
-                        if(rind->rhdr.type == RpcMessage::MSG_TYPE_REQUEST) {
-#ifdef CPU_TIME
-                            responseStartClock = clock();
-#else
-                            gettimeofday(&responseStartClock, NULL);
-#endif
-                            RpcRequest* rpcReq = new RpcRequest();
-                            rpcReq->type = rind->rhdr.type;
-                            rpcReq->seqNo = rind->rhdr.seqNo;
-                            rpcReq->socketFd = sockFd;
-                            rpcReq->serviceId = rind->rhdr.req.serviceId;
-                            rpcReq->methodId = rind->rhdr.req.methodId;
-                            rpcReq->argsSize = rind->rhdr.totalSz;
-                            
-                            // if have recieved all the data, put to a working thread
-                            RpcWorkerThread* workerThd = new RpcWorkerThread(endpoint, rpcReq);
-                            rpcThdPool->assignWork(workerThd);
-                            
-                        } else {
-#ifdef CPU_TIME
-                            reqResGetStart = clock();
-#else
-                            gettimeofday(&reqResGetStart, NULL);
-#endif
-                            RpcResponse* rpcRes = new RpcResponse();
-                            u8 idxId = sockFd;
-                            idxId <<= 4;
-                            idxId += rind->rhdr.seqNo;
-                            rpcRes->type = rind->rhdr.type;
-                            rpcRes->seqNo = rind->rhdr.seqNo;
-                            rpcRes->errorNo = rind->rhdr.res.errorNo;
-                            rpcRes->retSize = rind->rhdr.totalSz;
-                                 
-                            pthread_mutex_lock(idxMtxMaps[idxId]); 
-                            arrivedResps[idxId] = rpcRes;
-                            // notify the waiting rpc threads
-                            //ALOGE("rpc audio service the control signal the idx: %lld, sockfd: %d, seq: %d, mtx: %d, cond: %d", idxId, sockFd, rind->rhdr.seqNo, idxMtxMaps[idxId], idxCondMaps[idxId]);
-                            pthread_cond_signal(idxCondMaps[idxId]);
-                            pthread_mutex_unlock(idxMtxMaps[idxId]);
-                        }
+                        
+                        // no further data contents for this read
+                        if(rind->rsz == 0) {
+                            if(rind->rhdr.type == RpcMessage::MSG_TYPE_REQUEST) {
+                                RpcRequest* rpcReq = new RpcRequest();
+                                rpcReq->type = rind->rhdr.type;
+                                rpcReq->seqNo = rind->rhdr.seqNo;
+                                rpcReq->socketFd = sockFd;
+                                rpcReq->serviceId = rind->rhdr.req.serviceId;
+                                rpcReq->methodId = rind->rhdr.req.methodId;
+                                rpcReq->argsSize = rind->rhdr.totalSz;
+                                    //ALOGE("rpc audio service request has been received");
+                                
+                                // if have recieved all the data, put to a working thread
+                                //SERVER_RPC_PROFILING_START(rpcReq->seqNo)
+                                RpcWorkerThread* workerThd = new RpcWorkerThread(endpoint, rpcReq);
+                                rpcThdPool->assignWork(workerThd);
+                            } else {
+                                RpcResponse* rpcRes = new RpcResponse();
+                                u8 idxId = sockFd;
+                                idxId <<= 4;
+                                idxId += rind->rhdr.seqNo;
+                                rpcRes->type = rind->rhdr.type;
+                                rpcRes->seqNo = rind->rhdr.seqNo;
+                                rpcRes->errorNo = rind->rhdr.res.errorNo;
+                                rpcRes->retSize = rind->rhdr.totalSz;
+                                    //ALOGE("rpc audio service response has been received");
+                                     
+                                pthread_mutex_lock(idxMtxMaps[idxId]); 
+                                arrivedResps[idxId] = rpcRes;
+                                // notify the waiting rpc threads
+                                //ALOGE("rpc audio service the control signal the idx: %lld, sockfd: %d, seq: %d, mtx: %d, cond: %d", idxId, sockFd, rind->rhdr.seqNo, idxMtxMaps[idxId], idxCondMaps[idxId]);
+                                pthread_cond_signal(idxCondMaps[idxId]);
+                                //CLIENT_REMOTE_PROFILING_END(rpcRes->seqNo)
+                                pthread_mutex_unlock(idxMtxMaps[idxId]);
+                            }
 
-                        rind->rst = 0;
-                        rind->rpos = 0;
-                        rind->rsz = sizeof(MsgHeader);
+                            rind->rst = 0;
+                            rind->rpos = 0;
+                            rind->rsz = sizeof(MsgHeader);
+                        }
                     }
                 } else if(rind->rst == 1) { // indicating that it is now reading the rpc message contents
                     res = read(sockFd, rind->rbuf + rind->rpos, rind->rsz - rind->rpos);
                     CHECK_RESULT("read", res);
                     rind->rpos += res;
+                    totalReadBytes += res;
 
                     if(rind->rpos == rind->rsz) {
 #ifdef USE_COMPRESSION
                         /* Do the decompression and push the data to the thread. */
+                        COMPRESSION_PROFILING_START()
                         rstrm.avail_in = rind->rsz;
                         rstrm.next_in = (unsigned char*)rind->rbuf;
                         rstrm.avail_out = sizeof(rind->rbuftmp);
                         rstrm.next_out = (unsigned char*)rind->rbuftmp;
                         int ret = inflate(&rstrm, Z_SYNC_FLUSH);
+                        totalOReadBytes += sizeof(rind->rbuftmp) - rstrm.avail_out;
+                        COMPRESSION_PROFILING_END(rind->rhdr.seqNo, "decompression")
                         //ALOGE("rpc service control the inflate size: %d - %d", rstrm.avail_out, ret);
+#else
+                        totalOReadBytes += rind->rsz;
 #endif
-
-                        /*cread_bytes += rsz;
-                        read_bytes += sizeof(rbuftmp) - rstrm.avail_out;
-                        if(read_bytes - read_acked_bytes > (1<<10)) {
-                            //ALOGI("READ [b, db, cb, dcb] = [%lld, %lld, %lld, %lld]",
-                            //     read_bytes, read_bytes - read_acked_bytes,
-                            //     cread_bytes, cread_bytes - cread_acked_bytes);
-                            read_acked_bytes = read_bytes;
-                            cread_acked_bytes = cread_bytes;
-                        }*/
 
 #ifdef USE_COMPRESSION
                         if(rstrm.avail_out != sizeof(rind->rbuftmp)) {
@@ -390,16 +386,8 @@ void message_loop(RpcEndpoint* endpoint) {
                                 // if have recieved all the data, put to a working thread
                                 if(rpcReq->argsSize == fifoSize(rpcReq->args)) {
                                     inMsgMaps.erase(idxId);
-#ifdef LOG_RPC_TIME
-                                    gettimeofday(&finish, NULL);
-                                    ALOGE("rpc request finish receiving duration: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
-                                    start = finish;
-#endif
-#ifdef CPU_TIME
-                                    responseStartClock = clock();
-#else
-                                    gettimeofday(&responseStartClock, NULL);
-#endif
+                                //ALOGE("rpc audio service request has been received");
+                                    //SERVER_RPC_PROFILING_START(rpcReq->seqNo)
                                     RpcWorkerThread* workerThd = new RpcWorkerThread(endpoint, rpcReq);
                                     rpcThdPool->assignWork(workerThd);
                                 }
@@ -426,22 +414,14 @@ void message_loop(RpcEndpoint* endpoint) {
 #endif
                                 //if have received all the data, awake a waiting rpc thread
                                 if(rpcRes->retSize == fifoSize(rpcRes->ret)) {
-#ifdef CPU_TIME
-                                    reqResGetStart = clock();
-#else
-                                    gettimeofday(&reqResGetStart, NULL);
-#endif
                                     pthread_mutex_lock(idxMtxMaps[idxId]); 
                                     arrivedResps[idxId] = rpcRes;
                                     inMsgMaps.erase(idxId);
-#ifdef LOG_RPC_TIME
-                                    gettimeofday(&finish, NULL);
-                                    ALOGE("rpc response finish receiving duration: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
-                                    start = finish;
-#endif
+                                //ALOGE("rpc audio service response has been received");
                                     // notify the waiting rpc threads
                             //ALOGE("rpc audio service the control signal the idx: %lld, sockfd: %d, seq: %d, mtx: %d, cond: %d", idxId, sockFd, rind->rhdr.seqNo, idxMtxMaps[idxId], idxCondMaps[idxId]);
                                     pthread_cond_signal(idxCondMaps[idxId]);
+                                    //CLIENT_REMOTE_PROFILING_END(rpcRes->seqNo)
                                     pthread_mutex_unlock(idxMtxMaps[idxId]);
                                 }
                             }
@@ -462,6 +442,8 @@ void message_loop(RpcEndpoint* endpoint) {
                     res = write(s, ((char*)&wind->whdr) + wind->wpos, wind->wsz - wind->wpos);
                     CHECK_RESULT("write", res);
                     wind->wpos += res;
+                    totalWriteBytes += res;
+                    totalOWriteBytes += res;
 
                     if(wind->wpos == wind->wsz) {
                         wind->wsz = ntohl(wind->whdr.sz);
@@ -473,8 +455,10 @@ void message_loop(RpcEndpoint* endpoint) {
                     CHECK_RESULT("write", res);
                     wind->wbuf += res;
                     wind->wpos += res;
+                    totalWriteBytes += res;
 
                     if(wind->wpos == wind->wsz) { // indicating that all the data has already been written
+                        totalOWriteBytes += wind->owsz;
                         wind->wst = -1;
                         
                         RpcMessage* rpcMsg = outRpcMsgs[s].front();
@@ -485,21 +469,9 @@ void message_loop(RpcEndpoint* endpoint) {
                                 pthread_mutex_lock(&outRpcLock); {
                                     outRpcMsgs[s].pop();
                                 } pthread_mutex_unlock(&outRpcLock);
-#ifdef CPU_TIME
-                                requestSendClock = clock();
-                                //ALOGE("rpc sensor service experiment request sending time: %f, seqNo: %d", ((double (requestSendClock - requestStartClock)) / CLOCKS_PER_SEC) * 1000000, rpcReq->seqNo);
-#else
-                                gettimeofday(&requestSendClock, NULL);
-                                //ALOGE("rpc sensor service experiment request sending time: %ld, seqNo: %d", (requestSendClock.tv_sec - requestStartClock.tv_sec) * 1000000 + requestSendClock.tv_usec - requestStartClock.tv_usec, rpcReq->seqNo);
-#endif
-                                fifoDestroy(rpcReq->args);
+                                CLIENT_REMOTE_PROFILING_START(rpcReq->seqNo, rpcReq->serviceId, rpcReq->methodId);
+                                //ALOGE("rpc audio service request has been sent");
                                 delete rpcReq;
-                                
-#ifdef LOG_RPC_TIME
-                                gettimeofday(&finish, NULL);
-                                ALOGE("rpc request sending duration: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
-                                start = finish;
-#endif
                             }
                         } else {
                             RpcResponse* rpcRes = static_cast<RpcResponse*> (rpcMsg);
@@ -508,22 +480,9 @@ void message_loop(RpcEndpoint* endpoint) {
                                 pthread_mutex_lock(&outRpcLock); {
                                     outRpcMsgs[s].pop();
                                 } pthread_mutex_unlock(&outRpcLock);
-#ifdef CPU_TIME
-                                responseSendClock = clock();
-                                //ALOGE("rpc sensor service experiment response sending time: %f, seqNo: %d",  ((double (responseSendClock - responseStartClock)) / CLOCKS_PER_SEC) * 1000000, rpcRes->seqNo);
-#else
-                                gettimeofday(&responseSendClock, NULL);
-                                //ALOGE("rpc sensor service experiment response sending time: %ld, seqNo: %d",  (responseSendClock.tv_sec - responseStartClock.tv_sec) * 1000000 + responseSendClock.tv_usec - responseStartClock.tv_usec, rpcRes->seqNo);
-#endif
-                                
-                                fifoDestroy(rpcRes->ret);
+                                SERVER_RPC_PROFILING_END(rpcRes->seqNo)
+                                //ALOGE("rpc audio service response has been sent");
                                 delete rpcRes;
-                                
-#ifdef LOG_RPC_TIME
-                                gettimeofday(&finish, NULL);
-                                ALOGE("rpc response sending duration: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
-                                start = finish;
-#endif
                             }
                         }
 
@@ -608,8 +567,27 @@ void releaseLock(u8 idxId)
     pthread_mutex_unlock(rpcResLock);
 }
 
+/* create a thread to profiling how many bytes are sent and read in every minite */
+static void* dataProfiling(void* args)
+{
+    u8 lastTotalReadBytes = 0;
+    u8 lastTotalWriteBytes = 0;
+    u8 lastTotalOReadBytes = 0;
+    u8 lastTotalOWriteBytes = 0;
+    while (true) {
+        sleep(60);
+        ALOGE("[rpc evaluation], data throughput in bytes for last minute, totalRead: %lld, totalWrite: %lld, totalShallRead: %lld, totalShallWrite: %lld", (totalReadBytes - lastTotalReadBytes), (totalWriteBytes - lastTotalWriteBytes), (totalOReadBytes - lastTotalOReadBytes), (totalOWriteBytes - lastTotalOWriteBytes));
+        lastTotalReadBytes = totalReadBytes;
+        lastTotalWriteBytes = totalWriteBytes;
+        lastTotalOReadBytes = totalOReadBytes;
+        lastTotalOWriteBytes = totalOWriteBytes;
+    }
+    
+    return NULL;
+}
+
 void controlInit() {
-    int poolSize = 10;
+    int poolSize = 4;
     rpcThdPool = new ThreadPool(poolSize);
     rpcThdPool->initializeThreads();
     
@@ -618,6 +596,10 @@ void controlInit() {
     pthread_mutex_init(rpcResLock, NULL);
     
     pipe(rpcNetPipe);
+    
+    
+    pthread_t dataProfilingThread;
+    pthread_create(&dataProfilingThread, NULL, dataProfiling, NULL);
 }
 
 // ---------------------------------------------------------------------------

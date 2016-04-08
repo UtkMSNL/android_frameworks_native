@@ -18,7 +18,8 @@ sources := \
     FifoBuffer.cpp \
     Control.cpp  \
     share_rpc.cpp \
-    sbuffer_sync.cpp
+    sbuffer_sync.cpp \
+    rpc_profiling.cpp
     
 LOCAL_PATH:= $(call my-dir)
 

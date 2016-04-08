@@ -2,6 +2,7 @@
 #include <fstream>
 #include <utils/Log.h>
 #include "time.h" 
+#include <rpc/rpc_profiling.h>
 
 namespace android {
 // ---------------------------------------------------------------------------
@@ -167,6 +168,7 @@ void initAudioAppBufferEndpoint() {
     if (AudioAppUtilInst.isShareEnabled && !AudioAppUtilInst.isServer) {
         initRpcEndpointBase(&AudioAppUtilInst);
         RpcBufferUtil::bufferUtilInit(AudioAppUtilInst.rpcclient);
+        ALOGE("rpc audio service audio app buffer initialized");
     }
 }
 
@@ -231,7 +233,10 @@ RpcResponse* RpcBufferUtil::genericPullRes(RpcRequest* request) {
     return response;
 }
 
+u4 seqNo;
+
 int RpcBufferUtil::genericPushReq(GenericPush* gensync, GenericBuf* genbuf) {
+    //ALOGE("rpc audio service start genericPushReq");
     SyncDescriptor* syncdes = syncDescriptorMap[gensync->baseAddr];
     RpcRequest* request = new RpcRequest(BUFF_SERVICE_ID, BUFF_STRUCT_PUSH_METHOD_ID, syncdes->socketFd, true);
     char* baseAddr = gensync->baseAddr;
@@ -247,13 +252,16 @@ int RpcBufferUtil::genericPushReq(GenericPush* gensync, GenericBuf* genbuf) {
     
     RpcResponse* response = endpoint->doRpc(request);
     setBit(offset, syncdes->dirty, 0);
+    seqNo = response->seqNo;
     delete response;
     
+    //ALOGE("rpc audio service finish genericPushReq");
     // the endpoint which writes with owner being held always return true
     return 1;
 }
 
 RpcResponse* RpcBufferUtil::genericPushRes(RpcRequest* request) {
+   // ALOGE("rpc audio service start genericPushRes");
     u4 baseAddrVal;
     request->getArg((char*) &baseAddrVal, sizeof(baseAddrVal));
     char* baseAddr = (char*) baseAddrVal;
@@ -273,6 +281,7 @@ RpcResponse* RpcBufferUtil::genericPushRes(RpcRequest* request) {
     setBit(offset, syncdes->dirty, 0);
     pthread_mutex_unlock(syncdes->lockMap[offset]);
     
+    //ALOGE("rpc audio service finish genericPushRes");
     RpcResponse* response = new RpcResponse(false);
     return response;
 }
@@ -327,6 +336,7 @@ RpcResponse* RpcBufferUtil::genericOwnerInvalidateRes(RpcRequest* request) {
 }
 
 int RpcBufferUtil::genericOwnerPushReq(GenericPush* gensync, GenericBuf* genbuf) {
+    //ALOGE("rpc audio service start genericOwnerPushReq");
     SyncDescriptor* syncdes = syncDescriptorMap[gensync->baseAddr];
     RpcRequest* request = new RpcRequest(BUFF_SERVICE_ID, BUFF_STRUCT_OWNER_PUSH_METHOD_ID, syncdes->socketFd, true);
     char* baseAddr = gensync->baseAddr;
@@ -347,11 +357,14 @@ int RpcBufferUtil::genericOwnerPushReq(GenericPush* gensync, GenericBuf* genbuf)
         setBit(offset, syncdes->owner, 1);
         setBit(offset, syncdes->dirty, 0);
     }
+    seqNo = response->seqNo;
+    //ALOGE("rpc audio service finish genericOwnerPushReq");
     delete response;
     return result;
 }
 
 RpcResponse* RpcBufferUtil::genericOwnerPushRes(RpcRequest* request) {
+    //ALOGE("rpc audio service start genericOwnerPushRes");
     u4 baseAddrVal;
     request->getArg((char*) &baseAddrVal, sizeof(baseAddrVal));
     char* baseAddr = (char*) baseAddrVal;
@@ -383,6 +396,7 @@ RpcResponse* RpcBufferUtil::genericOwnerPushRes(RpcRequest* request) {
     pthread_mutex_unlock(syncdes->writingLockMap[offset]);
     response->putRet((char*) &result, sizeof(result));
    
+    //ALOGE("rpc audio service finish genericOwnerPushRes");
     return response;
 }
 
@@ -496,9 +510,7 @@ static inline void decIsWriting(SyncDescriptor* syncdes, int offset)
 }
 
 void RpcBufferUtil::write(void* datablk, int offset, int size, void* value, void* bufblk, int bufOffset, int bufSize) {
-    //struct timeval start, finish; 
-    //gettimeofday(&start, NULL);
-    //ALOGE("rpc audio service buffer write 1");
+    CLIENT_METH_PROFILING_START(0, 0)
     SyncDescriptor* syncdes = syncDescriptorMap[datablk];
     checkLockExist(syncdes, offset);
     incIsWriting(syncdes, offset);
@@ -522,8 +534,10 @@ void RpcBufferUtil::write(void* datablk, int offset, int size, void* value, void
     
     decIsWriting(syncdes, offset);
     pthread_mutex_unlock(syncdes->lockMap[offset]);
-    //gettimeofday(&finish, NULL);
-     //ALOGE("rpc audio service the time for data sync %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
+    if (seqNo != 0 && !AudioRpcUtilInst.isServer) {
+        CLIENT_METH_PROFILING_END(seqNo)
+        seqNo = 0;
+    }
 }
 
 void RpcBufferUtil::wrapBufData(GenericBuf* genbuf, RpcRequest* request)
@@ -538,7 +552,7 @@ void RpcBufferUtil::wrapBufData(GenericBuf* genbuf, RpcRequest* request)
     void* datablk = genbuf->baseAddr;
     int offset = genbuf->offset;
     int size = genbuf->size;
-    //ALOGE("rpc audio service data sync start with addr: %d, offset: %d, size: %d", datablk, offset, size);
+    //ALOGE("rpc audio service data sync start with addr: %p, offset: %d, size: %d", datablk, offset, size);
     u4 targetBaseAddr = (*sharedAddrMap)[(u4) datablk];
     request->putArg((char*) &targetBaseAddr, sizeof(targetBaseAddr));
     request->putArg((char*) &offset, sizeof(offset));
@@ -628,7 +642,7 @@ int32_t RpcBufferUtil::rpcAtomicOr(void* datablk, volatile int32_t* data, int32_
     
     decIsWriting(syncdes, offset);
     pthread_mutex_unlock(syncdes->lockMap[offset]);
-    ALOGE("rpc auido service atomic and old: %d, new: %d, value: %d", curValue, newValue, value);
+    //ALOGE("rpc auido service atomic and old: %d, new: %d, value: %d", curValue, newValue, value);
     
     return curValue;
 }
@@ -674,13 +688,12 @@ int32_t RpcBufferUtil::rpcAtomicAnd(void* datablk, volatile int32_t* data, int32
     
     decIsWriting(syncdes, offset);
     pthread_mutex_unlock(syncdes->lockMap[offset]);
-    ALOGE("rpc auido service atomic and old: %d, new: %d, value: %d", curValue, newValue, value);
+    //ALOGE("rpc auido service atomic and old: %d, new: %d, value: %d", curValue, newValue, value);
     
     return curValue;
 }
 
 void RpcBufferUtil::waitOnVal(void* datablk, int* futex, int value, const struct timespec *ts) {
-        ALOGE("rpc audio service trying to wait");
     SyncDescriptor* syncdes = syncDescriptorMap[datablk];
     int offset = (char*) futex - (char*) datablk;
     checkLockExist(syncdes, offset);
@@ -688,14 +701,14 @@ void RpcBufferUtil::waitOnVal(void* datablk, int* futex, int value, const struct
     pthread_mutex_lock(syncdes->lockMap[offset]);
     //TODO: we may need to request ownership here because the data may change after reading the value    
     if (syncdes->addrCondMap.find(offset) == syncdes->addrCondMap.end()) {
-        pthread_cond_t cond;
-        pthread_cond_init(&cond, NULL);
-        syncdes->addrCondMap[offset] = &cond;
+        pthread_cond_t* cond = new pthread_cond_t();
+        pthread_cond_init(cond, NULL);
+        syncdes->addrCondMap[offset] = cond;
     }
     int curValue;
     read(datablk, offset, sizeof(int), &curValue);
     if (curValue == value) {
-        ALOGE("rpc audio service entering wait state");
+        //ALOGE("rpc audio service entering wait state");
         pthread_cond_timedwait(syncdes->addrCondMap[offset], syncdes->lockMap[offset], ts);
     }
     
@@ -716,7 +729,7 @@ void RpcBufferUtil::wakeLocal(void* datablk, int* futex) {
 }
 
 void RpcBufferUtil::wakeRemote(void* datablk, int* futex) {
-    ALOGE("rpc audio service the thread starts to wake remote call, addr: %d", datablk);
+    //ALOGE("rpc audio service the thread starts to wake remote call, addr: %d", datablk);
     SyncDescriptor* syncdes = syncDescriptorMap[datablk];
     int offset = (char*) futex - (char*) datablk;
     RpcRequest* request = new RpcRequest(BUFF_SERVICE_ID, BUFF_STRUCT_WAKE_REMOTE, syncdes->socketFd, true);
@@ -732,7 +745,7 @@ RpcResponse* RpcBufferUtil::wakeRemoteRes(RpcRequest* request) {
     u4 baseAddrVal;
     request->getArg((char*) &baseAddrVal, sizeof(baseAddrVal));
     char* baseAddr = (char*) baseAddrVal;
-    ALOGE("rpc audio service the thread starts to be waked by remote, addr: %d", baseAddr);
+    //ALOGE("rpc audio service the thread starts to be waked by remote, addr: %d", baseAddr);
     u4 offset;
     request->getArg((char*) &offset, sizeof(offset));
     
@@ -781,6 +794,12 @@ void RpcBufferUtil::bufferUtilInit(RpcEndpoint* vEndpoint) {
     endpoint->registerFunc(BUFF_SERVICE_ID, BUFF_STRUCT_OWNER_PUSH_METHOD_ID, &genericOwnerPushRes);
     endpoint->registerFunc(BUFF_SERVICE_ID, BUFF_STRUCT_INVALIDATE_METHOD_ID, &genericInvalidateRes);
     endpoint->registerFunc(BUFF_SERVICE_ID, BUFF_STRUCT_WAKE_REMOTE, &wakeRemoteRes);
+    
+    // this code is only for profiling, can be deleted if do not need profiling any more
+    u8 funcId = getFuncId(BUFF_SERVICE_ID, BUFF_STRUCT_PUSH_METHOD_ID);
+    profilingMethods.insert(funcId);
+    funcId = getFuncId(BUFF_SERVICE_ID, BUFF_STRUCT_OWNER_PUSH_METHOD_ID);
+    profilingMethods.insert(funcId);
 }
 
 // ---------------------------------------------------------------------------

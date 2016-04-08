@@ -34,7 +34,9 @@
 #include <sys/time.h>
 #include <android/sensor.h>
 
-#define DELAY_TEST 1
+//#define DELAY_TEST 1
+
+#define THROUGHPUT_STAT
 
 namespace android {
 // ----------------------------------------------------------------------------
@@ -68,6 +70,21 @@ static void* evalDelayLoop(void* arg) {
 }
 #endif
 
+
+#ifdef THROUGHPUT_STAT
+static u4 totalBytes = 0;
+
+static void* evalThroughputLoop(void* arg) {
+    u4 lastTotalBytes = 0;
+    while(1) {
+        sleep(60);
+        ALOGE("[rpc evaluation], data throughput in bytes for last minute, %d", totalBytes - lastTotalBytes);
+        lastTotalBytes = totalBytes;
+    }
+    return NULL;
+}
+#endif
+
 void initBitTubeServer() {
     union {
         struct sockaddr_in addrin;
@@ -98,6 +115,12 @@ void initBitTubeServer() {
             perror("listen to port failed");
             return;
         }
+
+#ifdef THROUGHPUT_STAT
+                // for sensor data throughput test
+                pthread_t tempThroughputThread;
+                pthread_create(&tempThroughputThread, NULL, evalThroughputLoop, NULL);
+#endif
         //ALOGI("Ready to accept connections on %d", addr.addrin.sin_port);
         while(1) {
             union {
@@ -257,7 +280,7 @@ ssize_t RpcBitTube::write(void const* vaddr, size_t size)
     do {
         //len = ::send(mSendFd, (char*) vaddr + start, size - start, MSG_DONTWAIT);
         len = ::write(mSendFd, (char*) vaddr + start, size - start);
-        //ALOGE("rpc sensor service write data content to rpc bit tube, fd: %d, len: %d, size, %d, errno: %d, err msg: %s", mSendFd, len, size, errno, strerror(errno));
+        ALOGE("rpc sensor service write data content to rpc bit tube, fd: %d, len: %d, size, %d, errno: %d, err msg: %s", mSendFd, len, size, errno, strerror(errno));
         //if(start == 0 && (len < 0 && errno != EINTR && errno != EAGAIN)) {
         //    return -errno;
         //}
@@ -295,6 +318,10 @@ ssize_t RpcBitTube::write(void const* vaddr, size_t size)
         // cannot return less than size, since we're using SOCK_SEQPACKET
     //    err = len < 0 ? errno : 0;
     //} while (err == EINTR);
+
+#ifdef THROUGHPUT_STAT
+    totalBytes += size + sizeof(size);
+#endif
     return err == 0 ? size : -err;
 }
 

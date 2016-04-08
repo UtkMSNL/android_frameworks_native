@@ -9,9 +9,13 @@
 #include "common.h"
 #include "thread_pool.h"
 #include "FifoBuffer.h"
+#include "rpc_profiling.h"
+#include "time.h"
 
 namespace android {
 // ---------------------------------------------------------------------------
+
+extern timeval audioStartTime;
 
 void addOutRpcMsg(RpcMessage* rpcMsg);
 
@@ -65,7 +69,6 @@ public:
     
     unsigned virtual executeThis() {
         endpoint->serverHandleRpc(rpcRequest);
-        fifoDestroy(rpcRequest->args);
         delete rpcRequest;
         return 0;
     }

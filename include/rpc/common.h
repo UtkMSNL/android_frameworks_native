@@ -56,6 +56,11 @@ public:
         }
     }
     
+    ~RpcRequest() {
+        fifoDestroy(args);
+        args = NULL;
+    }
+    
     void putArg(char* data, int size) {
         fifoPushData(args, data, size);
         argsSize += size;

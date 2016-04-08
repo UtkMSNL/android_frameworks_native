@@ -16,6 +16,8 @@
 #include <utils/Log.h>
 #include <private/gui/LayerState.h>
 
+#include "time.h" 
+
 namespace android {
 
 RpcResponse* SurfaceFlinger_addClient(RpcRequest* request)
@@ -98,8 +100,11 @@ RpcResponse* SurfaceFlinger_removeLayer(RpcRequest* request)
     return response; 
 }
 
+u4 receivedFrames = 0;
+struct timeval lastTime;
 RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
 {
+    SERVER_METH_PROFILING_START(request->seqNo)
     int clientId;
     request->getArg((char*) &clientId, sizeof(clientId));
     int layerId;
@@ -191,7 +196,7 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
     ALOGE_IF(err, "error locking dst buffer %s", strerror(-err));
     if (dst_bits) {
         memcpy(dst_bits, data, size);
-        ALOGE("rpc surface flinger copied data: width[%d], height[%d], stride[%d], format[%d], usage[%d], size[%d]", width, height, stride, format, usage, size);
+        ALOGI("rpc surface flinger copied data: width[%d], height[%d], stride[%d], format[%d], usage[%d], size[%d]", width, height, stride, format, usage, size);
         dst->unlock();
     }
     // queue the producer buffer
@@ -214,6 +219,21 @@ RpcResponse* SurfaceFlinger_syncLayer(RpcRequest* request)
     } else {
         free(data);
     }
+    
+    // code for profiling
+    if (receivedFrames == 0) {
+        gettimeofday(&lastTime, NULL);
+    }
+    receivedFrames++;
+    if (receivedFrames > 0 && receivedFrames % 1000 == 0) {
+        struct timeval finish;
+        gettimeofday(&finish, NULL);
+        double secs = (double) ((finish.tv_sec - lastTime.tv_sec) + (finish.tv_usec - lastTime.tv_usec) * 0.000001);
+        ALOGE("[rpc evaluation], achieved fps for LCD is: %f, width: %d, height: %d, size: %d", (1000 / secs), width, height, size);
+        lastTime = finish;
+    }
+    
+    SERVER_METH_PROFILING_END(request->seqNo)
     ALOGI("rpc surface flinger sync a layer server");
     return response;
 }

@@ -41,6 +41,8 @@ clock_t requestStartClock, requestSendClock, responseStartClock, responseSendClo
 struct timeval requestStartClock, requestSendClock, responseStartClock, responseSendClock, reqResGetStart, reqResFinishClock;
 #endif
 
+struct timeval audioStartTime;
+
 extern std::map<u8, pthread_mutex_t*> idxMtxMaps;
 extern std::map<u8, pthread_cond_t*> idxCondMaps;
 
@@ -53,28 +55,24 @@ void RpcEndpoint::init() {
 }
 
 RpcResponse* RpcEndpoint::doRpc(RpcRequest* rpcReq) {
-    struct timeval start, finish;
-    gettimeofday(&start, NULL);
     
     pthread_mutex_lock(&nextSeqNoLock); {
         rpcReq->seqNo = nextSequenceNo++;
     } pthread_mutex_unlock(&nextSeqNoLock);
+    u4 seqNo = rpcReq->seqNo;
     u8 idxId = rpcReq->socketFd;
     idxId <<= 4;
     idxId += rpcReq->seqNo;
     acquireLock(idxId);
     pthread_mutex_lock(idxMtxMaps[idxId]); 
     addOutRpcMsg(rpcReq);
+    //CLIENT_REMOTE_PROFILING_START(seqNo, rpcReq->serviceId, rpcReq->methodId);
     
     while(true) {
         pthread_cond_wait(idxCondMaps[idxId], idxMtxMaps[idxId]);
     //ALOGE("rpc audio service the do rpc signaling the thread idx: %lld, sockFd: %d, seq: %d", idxId, rpcReq->socketFd, rpcReq->seqNo);
         if(arrivedResps.find(idxId) != arrivedResps.end()) {
-#ifdef LOG_RPC_TIME
-            gettimeofday(&finish, NULL);
-            ALOGE("rpc received to singal ending duration: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
-            start = finish;
-#endif
+            CLIENT_REMOTE_PROFILING_END(seqNo)
             break;
         }
     }
@@ -83,12 +81,13 @@ RpcResponse* RpcEndpoint::doRpc(RpcRequest* rpcReq) {
     pthread_mutex_unlock(idxMtxMaps[idxId]);
     releaseLock(idxId);
     
-    gettimeofday(&finish, NULL);
-    ALOGI("rpc audio service the do rpc time: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);// idx: %lld, sockFd: %d, seq: %d, mtx: %d, cond: %d", idxId, rpcReq->socketFd, rpcReq->seqNo, idxMtxMaps[idxId], idxCondMaps[idxId]);
+    //ALOGI("rpc audio service the do rpc time: %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);// idx: %lld, sockFd: %d, seq: %d, mtx: %d, cond: %d", idxId, rpcReq->socketFd, rpcReq->seqNo, idxMtxMaps[idxId], idxCondMaps[idxId]);
     return rpcRes;
 }
 
 void RpcEndpoint::serverHandleRpc(RpcRequest* rpcReq) {
+    u4 seqNo = rpcReq->seqNo;
+    SERVER_RPC_PROFILING_START(seqNo)
     u8 funcId = rpcReq->serviceId;
     funcId <<= 4;
     funcId += rpcReq->methodId;
@@ -97,11 +96,7 @@ void RpcEndpoint::serverHandleRpc(RpcRequest* rpcReq) {
     rpcRes->seqNo = rpcReq->seqNo;
     rpcRes->socketFd = rpcReq->socketFd;
     addOutRpcMsg(rpcRes);
-#ifdef LOG_RPC_TIME
-//    finish = clock();
-//    std::cout<<"server handle rpc duration: " << ((double)(finish - start) / CLOCKS_PER_SEC) << std::endl;
-//    start = finish;
-#endif
+    //SERVER_RPC_PROFILING_END(seqNo)
 }
 
 void RpcEndpoint::registerFunc(u4 serviceId, u4 methodId, RpcCallFunc callFunc) {
@@ -416,7 +411,7 @@ void readRpcConf() {
     std::string line;
     // indicates the channel port
     std::getline(*confFile, line);
-    RpcUtilInst.sensorChannelPort = std::atoi(line.c_str());
+    RpcUtilInst.sensorChannelPort = 53388; //std::atoi(line.c_str());
     confFile->close();
     ALOGE("rpc sensor service conf isenabled: %d, isServer: %d, serverAddr: %s, port: %d, channelPort: %d", RpcUtilInst.isShareEnabled, RpcUtilInst.isServer, RpcUtilInst.serverAddr, RpcUtilInst.serverPort, RpcUtilInst.sensorChannelPort);
 }

@@ -204,7 +204,6 @@ Vector<Sensor> RpcSensorService::getSensorList()
     
     //ALOGE("rpc sensor service get remote sensor count is: %d", sensorList.size());
     
-    fifoDestroy(response->ret);
     delete response;
     
 #ifdef CPU_TIME
@@ -293,7 +292,6 @@ sp<ISensorEventConnection> RpcSensorService::createSensorEventConnection()
     int remoteServiceId;
     fifoReadBuffer(response->ret, (char*) &remoteServiceId, sizeof(remoteServiceId));
     
-    fifoDestroy(response->ret);
     delete response;
     
     sp<ISensorEventConnection> result(new RpcSensorService::RpcSensorEventConnectionProxy(this, remoteServiceId, sendFd, receiveFd));
@@ -346,7 +344,6 @@ RpcSensorService::RpcSensorEventConnectionProxy::~RpcSensorEventConnectionProxy(
     request->argsSize = 0;
     RpcResponse* response = RpcUtilInst.rpcclient->doRpc(request);
     
-    fifoDestroy(response->ret);
     delete response;
         
 #ifdef CPU_TIME
@@ -401,7 +398,6 @@ status_t RpcSensorService::RpcSensorEventConnectionProxy::enableDisable(
     status_t err;
     fifoReadBuffer(response->ret, (char*) &err, sizeof(err));
     
-    fifoDestroy(response->ret);
     delete response;
     
     //ALOGE("rpc sensor service finish enabling and disabling the sensor handle: %d, service id: %d, sampling: %lld, batch: %ld", handle, mRemoteServiceId, samplingPeriodNs, maxBatchReportLatencyNs);
@@ -447,7 +443,6 @@ status_t RpcSensorService::RpcSensorEventConnectionProxy::setEventRate(
     status_t err;
     fifoReadBuffer(response->ret, (char*) &err, sizeof(err));
     
-    fifoDestroy(response->ret);
     delete response;
     
     //ALOGE("rpc sensor service finish setting event rate: %d", handle);
@@ -486,7 +481,6 @@ status_t  RpcSensorService::RpcSensorEventConnectionProxy::flush() {
     status_t err;
     fifoReadBuffer(response->ret, (char*) &err, sizeof(err));
     
-    fifoDestroy(response->ret);
     delete response;
     
     //ALOGE("rpc sensor service finish flushing");
